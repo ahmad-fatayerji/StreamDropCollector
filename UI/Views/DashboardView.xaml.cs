@@ -206,8 +206,6 @@ namespace UI.Views
 
             _twitchGqlService = new TwitchGqlService(_twitchWebView);
 
-            Loaded += async (s, e) => await OnLoadedAsync();
-
             // Subscribe to progress updates ===
             DropsInventoryManager.Instance.TwitchProgressChanged += (campPct, dropPct) =>
             {
@@ -268,6 +266,8 @@ namespace UI.Views
                     TwitchWatchedChannel = channel;
                 });
             };
+
+            Loaded += async (s, e) => await OnLoadedAsync();
         }
 
         /// <summary>

@@ -138,7 +138,10 @@ namespace Core.Services
                         if (matchingEventDrop != null)
                         {
                             // This reward has been fully claimed via a game event drop
-                            updatedReward = updatedReward with { IsClaimed = true };
+                            updatedReward = updatedReward with {
+                                IsClaimed = true,
+                                ProgressMinutes = reward.RequiredMinutes // Mark as fully completed
+                            };
                         }
 
                         updatedRewardsForThisCampaign.Add(updatedReward);

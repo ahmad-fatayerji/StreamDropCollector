@@ -1,8 +1,13 @@
 {
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "Patch",
-  "changelog": "fixed counting error (%) and bug where after claiming all campaigns it would take an hour to idle again..",
+  "changelog": "Fixed a bug in prioritizing streamers to watch before general drops",
   "historic_versions": [
+    {
+      "version": "1.0.5",
+      "type": "Patch",
+      "changelog": "fixed counting error (%) and bug where after claiming all campaigns it would take an hour to idle again.."
+    },
     {
       "version": "1.0.4",
       "type": "Patch",

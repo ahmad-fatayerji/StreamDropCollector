@@ -152,7 +152,7 @@ namespace Core.Managers
             Application.Current.Dispatcher.Invoke(() =>
             {
                 ActiveCampaigns.Clear();
-                foreach (DropsCampaign? c in campaigns.Where(c => c.HasProgressToMake() && c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now).OrderBy(x => x.GameName))
+                foreach (DropsCampaign? c in campaigns.Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now).OrderBy(x => x.GameName))
                 {
                     ActiveCampaigns.Add(c);
                 }
@@ -280,7 +280,7 @@ namespace Core.Managers
                             if (allRewardsClaimed)
                             {
                                 // Remove the entire campaign from the list
-                                ActiveCampaigns.Remove(parentCampaign);
+                                //ActiveCampaigns.Remove(parentCampaign);
                             }
                             else
                             {
@@ -318,9 +318,7 @@ namespace Core.Managers
             if (twitchCampaigns.Count != 0 && TwitchWebView != null)
             {
                 DropsCampaign bestTwitch = SelectBestCampaign(twitchCampaigns);
-                string twitchUrl = bestTwitch.IsGeneralDrop
-                    ? await SelectTwitchStreamerForCampaign(bestTwitch)
-                    : bestTwitch.ConnectUrls[0];
+                string twitchUrl = await SelectTwitchStreamerForCampaign(bestTwitch);
 
                 if (!string.IsNullOrWhiteSpace(twitchUrl))
                 {
@@ -368,9 +366,7 @@ namespace Core.Managers
             if (kickCampaigns.Count != 0 && KickWebView != null)
             {
                 DropsCampaign bestKick = SelectBestCampaign(kickCampaigns);
-                string kickUrl = bestKick.IsGeneralDrop
-                    ? await SelectKickStreamerForCampaign(bestKick)
-                    : bestKick.ConnectUrls[0];
+                string kickUrl = await SelectKickStreamerForCampaign(bestKick);
 
                 if (!string.IsNullOrWhiteSpace(kickUrl))
                 {
@@ -480,13 +476,17 @@ namespace Core.Managers
         /// percentage, the campaign closest to earning its next unclaimed reward is selected.</returns>
         private static DropsCampaign SelectBestCampaign(List<DropsCampaign> campaigns)
         {
-            // Prioritize: highest completion % -> then soonest to complete next reward
             return campaigns
-                .OrderByDescending(c => c.CompletionPercentage())
+                // 1) Non-general drops first (false), then general drops (true)
+                .OrderBy(c => c.IsGeneralDrop)
+
+                // 2) highest completion % -> then soonest to complete next reward
+                .ThenByDescending(c => c.CompletionPercentage())
                 .ThenBy(c => c.Rewards
                     .Where(r => !r.IsClaimed)
                     .Min(r => r.RequiredMinutes - r.ProgressMinutes))
                 .First();
+
         }
         /// <summary>
         /// Attempts to set the Kick stream playback quality to the lowest available option asynchronously.
@@ -679,8 +679,7 @@ namespace Core.Managers
         /// suitable streamer is found.</returns>
         private async Task<string> SelectKickStreamerForCampaign(DropsCampaign campaign)
         {
-            if (!campaign.IsGeneralDrop)
-                return campaign.ConnectUrls[0];
+            string streamerUrl;
 
             await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(campaign.ConnectUrls[0]));
             await Task.Delay(1500);
@@ -706,7 +705,11 @@ namespace Core.Managers
             ";
 
             string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ExecuteScriptAsync(js));
-            string streamerUrl = rawResult?.Trim().Trim('"') ?? "";
+
+            if (!campaign.IsGeneralDrop)
+                streamerUrl = campaign.ConnectUrls[0];
+            else
+                streamerUrl = rawResult?.Trim().Trim('"') ?? "";
 
             System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Selected Kick streamer URL for campaign '{campaign.Name}': {streamerUrl}");
             KickChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
@@ -725,11 +728,9 @@ namespace Core.Managers
         /// Twitch directory, or an empty string if none is found.</returns>
         private async Task<string> SelectTwitchStreamerForCampaign(DropsCampaign campaign)
         {
-            if (!campaign.IsGeneralDrop)
-                return campaign.ConnectUrls[0];
-
             await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(campaign.ConnectUrls[0]));
             await Task.Delay(1500);
+            string streamerUrl;
 
             string js = @"
                 (() => {
@@ -741,7 +742,11 @@ namespace Core.Managers
             ";
 
             string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ExecuteScriptAsync(js));
-            string streamerUrl = rawResult?.Trim().Trim('"') ?? "";
+
+            if (!campaign.IsGeneralDrop)
+                streamerUrl = campaign.ConnectUrls[0];
+            else
+                streamerUrl = rawResult?.Trim().Trim('"') ?? "";
 
             System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Selected Twitch streamer URL for campaign '{campaign.Name}': {streamerUrl}");
             TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
