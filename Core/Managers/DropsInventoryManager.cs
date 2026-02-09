@@ -98,6 +98,8 @@ namespace Core.Managers
                         ActiveCampaigns.Add(c);
                     }
                 }
+
+                UpdateCurrentSelectionFlags();
             });
         }
         /// <summary>
@@ -156,6 +158,8 @@ namespace Core.Managers
                 {
                     ActiveCampaigns.Add(c);
                 }
+
+                UpdateCurrentSelectionFlags();
             });
 
             _ = StartWatchingStreams(); // Fire and forget - will handle its own loop
@@ -234,6 +238,9 @@ namespace Core.Managers
             {
                 System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] No active campaigns with progress to make. Stopping stream watching.");
                 MinerStatusChanged?.Invoke("Idle");
+                _currentTwitchCampaign = null;
+                _currentKickCampaign = null;
+                UpdateCurrentSelectionFlags();
                 return;
             }
 
@@ -277,25 +284,18 @@ namespace Core.Managers
                             // Check if EVERY reward in the campaign is now claimed
                             bool allRewardsClaimed = updatedRewards.All(r => r.IsClaimed);
 
-                            if (allRewardsClaimed)
-                            {
-                                // Remove the entire campaign from the list
-                                //ActiveCampaigns.Remove(parentCampaign);
-                            }
-                            else
-                            {
-                                // Update the campaign with the new rewards list
-                                DropsCampaign updatedCampaign = parentCampaign with { Rewards = updatedRewards };
+                            // Update the campaign with the new rewards list
+                            DropsCampaign updatedCampaign = parentCampaign with { Rewards = updatedRewards };
 
-                                int index = ActiveCampaigns.IndexOf(parentCampaign);
-                                if (index >= 0)
-                                {
-                                    ActiveCampaigns[index] = updatedCampaign;
-                                }
+                            int index = ActiveCampaigns.IndexOf(parentCampaign);
+                            if (index >= 0)
+                            {
+                                ActiveCampaigns[index] = updatedCampaign;
                             }
                         });
 
-                        NotificationManager.ShowNotification("Drop Claimed", $"Successfully claimed drop reward: {item.Name}");
+                        if (UISettingsManager.Instance.NotifyOnAutoClaimed)
+                            NotificationManager.ShowNotification("Drop Claimed", $"Successfully claimed drop reward: {item.Name}");
                     }
                     else
                     {
@@ -308,6 +308,18 @@ namespace Core.Managers
             {
                 // Notify user that there are rewards ready to claim
                 NotificationManager.ShowNotification("Drop Ready to Claim", $"You have {readyToClaimRewards.Count} drops rewards ready to claim. Please claim them manually.");
+            }
+
+            // If nothing left to progress after claiming, stop and reset
+            if (!ActiveCampaigns.Any(c => c.HasProgressToMake()))
+            {
+                System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
+                MinerStatusChanged?.Invoke("Idle");
+                _currentTwitchCampaign = null;
+                _currentKickCampaign = null;
+                _liveProgressTimer.Stop();
+                UpdateCurrentSelectionFlags();
+                return;
             }
 
             // Group campaigns by platform
@@ -327,6 +339,8 @@ namespace Core.Managers
                     {
                         // === CAPTURE CURRENT CAMPAIGN ===
                         _currentTwitchCampaign = bestTwitch;
+
+                        UpdateCurrentSelectionFlags();
 
                         // Reset local counter based on server's last known progress
                         _twitchWatchedSeconds = bestTwitch.Rewards
@@ -367,6 +381,7 @@ namespace Core.Managers
                     if (!string.IsNullOrWhiteSpace(kickUrl))
                     {
                         _currentKickCampaign = bestKick;
+                        UpdateCurrentSelectionFlags();
                         _kickWatchedSeconds = bestKick.Rewards
                             .Where(r => !r.IsClaimed)
                             .Sum(r => r.ProgressMinutes * 60);
@@ -413,6 +428,51 @@ namespace Core.Managers
 
             System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Next stream re-evaluation in ~{delayMs / 60000:F1} minutes at {nextCheckAt:u}");
             MinerStatusChanged?.Invoke("Mining");
+        }
+
+        private void UpdateCurrentSelectionFlags()
+        {
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                if (ActiveCampaigns.Count == 0)
+                    return;
+
+                List<DropsCampaign> updatedCampaigns = new List<DropsCampaign>(ActiveCampaigns.Count);
+
+                foreach (DropsCampaign campaign in ActiveCampaigns)
+                {
+                    bool isCurrentCampaign = (campaign.Platform == Platform.Twitch && campaign.Id == _currentTwitchCampaign?.Id) ||
+                                             (campaign.Platform == Platform.Kick && campaign.Id == _currentKickCampaign?.Id);
+
+                    DropsReward? currentReward = null;
+                    if (isCurrentCampaign)
+                    {
+                        currentReward = campaign.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .OrderBy(r => Math.Max(0, r.RequiredMinutes - r.ProgressMinutes))
+                            .FirstOrDefault();
+                    }
+
+                    List<DropsReward> updatedRewards = new List<DropsReward>(campaign.Rewards.Count);
+                    foreach (DropsReward reward in campaign.Rewards)
+                    {
+                        bool isCurrentReward = isCurrentCampaign && currentReward != null && reward.Id == currentReward.Id;
+                        updatedRewards.Add(reward with { IsCurrentReward = isCurrentReward });
+                    }
+
+                    updatedCampaigns.Add(campaign with
+                    {
+                        IsCurrentCampaign = isCurrentCampaign,
+                        Rewards = updatedRewards
+                    });
+                }
+
+                ActiveCampaigns.Clear();
+                foreach (DropsCampaign? c in updatedCampaigns.OrderBy(x => x.GameName))
+                {
+                    ActiveCampaigns.Add(c);
+                }
+            });
         }
         /// <summary>
         /// Begins periodic monitoring of the health status of the Twitch and Kick streams, triggering a re-evaluation

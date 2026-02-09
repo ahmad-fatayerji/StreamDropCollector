@@ -1,8 +1,13 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.8",
   "type": "Patch",
-  "changelog": "Improved stream selection and monitoring to verify that the watched Twitch or Kick stream matches the required game/category for each drops campaign",
+  "changelog": "Highlight current campaign/reward with \"WATCHING\" badges",
   "historic_versions": [
+    {
+      "version": "1.0.7",
+      "type": "Patch",
+      "changelog": "Improved stream selection and monitoring to verify that the watched Twitch or Kick stream matches the required game/category for each drops campaign"
+    },
     {
       "version": "1.0.6",
       "type": "Patch",

@@ -66,7 +66,7 @@
                                                Foreground="{DynamicResource TextMutedBrush}"
                                                Margin="0,4,0,10"/>
 
-                                    <!-- Platform Badge + End Time -->
+                                    <!-- Platform Badge + End Time + Watching Badge -->
                                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                                         <!-- Platform Badge - Kick = default (green), Twitch = purple -->
                                         <Border CornerRadius="6" Padding="10,4">
@@ -102,6 +102,18 @@
                                             <Run Text="Ends "/>
                                             <Run Text="{Binding EndsAt, StringFormat=MMM dd • HH:mm}"/>
                                         </TextBlock>
+
+                                        <!-- WATCHING Badge -->
+                                        <Border Margin="12,0,0,0"
+                                                CornerRadius="6"
+                                                Padding="8,4"
+                                            Background="{DynamicResource SecondaryAccentBrush}"
+                                                Visibility="{Binding IsCurrentCampaign, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                            <TextBlock Text="WATCHING"
+                                                       FontWeight="Bold"
+                                                       FontSize="10"
+                                                       Foreground="{DynamicResource MainBackgroundBrush}"/>
+                                        </Border>
                                     </StackPanel>
                                 </StackPanel>
 
@@ -119,6 +131,18 @@
                                                         CornerRadius="8"
                                                         Margin="0,0,0,8"
                                                         Padding="12">
+
+                                                    <Border.Style>
+                                                        <Style TargetType="Border">
+                                                            <Style.Triggers>
+                                                                <!-- Highlight active reward -->
+                                                                <DataTrigger Binding="{Binding IsCurrentReward}" Value="True">
+                                                                    <Setter Property="BorderBrush" Value="{DynamicResource SecondaryAccentBrush}"/>
+                                                                    <Setter Property="BorderThickness" Value="1.69"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </Border.Style>
 
                                                     <Grid>
                                                         <Grid.ColumnDefinitions>
@@ -169,6 +193,18 @@
                                                                 Margin="10,0,0,0"
                                                                 Visibility="{Binding IsClaimed, Converter={StaticResource BooleanToVisibilityConverter}}">
                                                             <TextBlock Text="CLAIMED"
+                                                                       FontWeight="Bold"
+                                                                       FontSize="10"
+                                                                       Foreground="{DynamicResource MainBackgroundBrush}"/>
+                                                        </Border>
+
+                                                        <!-- WATCHING Badge -->
+                                                        <Border Grid.Column="2" Background="{DynamicResource SecondaryAccentBrush}"
+                                                                CornerRadius="6"
+                                                                Padding="8,4"
+                                                                Margin="10,0,0,0"
+                                                                Visibility="{Binding IsCurrentReward, Converter={StaticResource BooleanToVisibilityConverter}}">
+                                                            <TextBlock Text="WATCHING"
                                                                        FontWeight="Bold"
                                                                        FontSize="10"
                                                                        Foreground="{DynamicResource MainBackgroundBrush}"/>

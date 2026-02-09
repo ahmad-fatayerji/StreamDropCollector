@@ -22,8 +22,10 @@
     <SolidColorBrush x:Key="ComboBoxItem.SelectedHoverBackground"     Color="#004D33"/>
 
     <Color x:Key="AccentColor">#00FF9D</Color>
+    <Color x:Key="SecondaryAccentColor">#3BAFFF</Color>
     <Color x:Key="TextPrimaryColor">#FFFFFF</Color>
     <Color x:Key="CardBackgroundColor">#1A1A1A</Color>
     
     <SolidColorBrush x:Key="AccentBrush"              Color="#00FF9D"/>
+    <SolidColorBrush x:Key="SecondaryAccentBrush"     Color="#3BAFFF"/>
 </ResourceDictionary>
