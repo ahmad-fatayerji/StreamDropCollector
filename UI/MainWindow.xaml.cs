@@ -190,6 +190,9 @@ namespace UI
 
                         NotificationManager.ShowNotification("Stream Drop Collector", "Application updated successfully!");
                         break;
+                    case "--minimize":
+                        EnterTrayMode();
+                        break;
                 }
             }
         }
@@ -324,7 +327,7 @@ namespace UI
             int extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
             SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_TOOLWINDOW);
 
-            Core.Managers.NotificationManager.ShowNotification("Stream Drop Collector", "Minimized to tray - drops still farming!");
+            NotificationManager.ShowNotification("Stream Drop Collector", "Minimized to tray - drops still farming!");
             MinimizeAndRestore.Header = "Restore";
             MyNotifyIcon.ToolTipText = "Stream Drop Collector - Farming in background";
         }

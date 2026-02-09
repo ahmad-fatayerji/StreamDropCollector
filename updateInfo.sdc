@@ -1,8 +1,13 @@
 {
-  "version": "1.0.8",
+  "version": "1.0.9",
   "type": "Patch",
-  "changelog": "Highlight current campaign/reward with \"WATCHING\" badges",
+  "changelog": "Fixed a minor issue where start minimized didn't take effect",
   "historic_versions": [
+    {
+      "version": "1.0.8",
+      "type": "Patch",
+      "changelog": "Highlight current campaign/reward with \"WATCHING\" badges"
+    },
     {
       "version": "1.0.7",
       "type": "Patch",
