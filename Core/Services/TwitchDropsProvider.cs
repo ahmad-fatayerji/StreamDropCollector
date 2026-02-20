@@ -1,5 +1,6 @@
 ﻿using System.Text.Json.Nodes;
 using System.Diagnostics;
+using Core.Logging;
 using Core.Interfaces;
 using Core.Models;
 using Core.Enums;
@@ -23,6 +24,7 @@ namespace Core.Services
         {
             try
             {
+                AppLogger.Info("TwitchDrops", "Fetching active campaigns started.");
                 await host.EnsureInitializedAsync();
 
                 JsonArray dashboard = await gql.QueryFullDropsDashboardAsync(ct);
@@ -55,8 +57,13 @@ namespace Core.Services
                     return false; // Keep
                 });
 
+                AppLogger.Info("TwitchDrops", $"Campaigns after status/account filter: count={campaigns?.Count ?? 0}");
+
                 if (campaigns == null || campaigns.Count == 0)
+                {
+                    AppLogger.Warn("TwitchDrops", "No Twitch campaigns remained after filtering.");
                     return [];
+                }
 
                 List<(string dropID, string channelLogin)> requests = new List<(string dropID, string channelLogin)>();
 
@@ -75,6 +82,7 @@ namespace Core.Services
                 if (requests.Count == 0)
                 {
                     Debug.WriteLine("[Drops] No valid dropIDs to query.");
+                    AppLogger.Warn("TwitchDrops", "No valid drop IDs available for details query.");
                     return [];
                 }
 
@@ -82,6 +90,7 @@ namespace Core.Services
                 Dictionary<string, JsonObject> campaignDetails = await gql.QueryDropCampaignDetailsBatchAsync(requests, ct);
 
                 Debug.WriteLine($"[Drops] Successfully fetched detailed data for {campaignDetails.Count} campaigns.");
+                AppLogger.Info("TwitchDrops", $"Campaign details fetched. requested={requests.Count}, received={campaignDetails.Count}");
 
                 List<DropsCampaign> result = new List<DropsCampaign>();
                 foreach (JsonObject camp in campaignDetails.Values)
@@ -138,7 +147,8 @@ namespace Core.Services
                         if (matchingEventDrop != null)
                         {
                             // This reward has been fully claimed via a game event drop
-                            updatedReward = updatedReward with {
+                            updatedReward = updatedReward with
+                            {
                                 IsClaimed = true,
                                 ProgressMinutes = reward.RequiredMinutes // Mark as fully completed
                             };
@@ -157,11 +167,13 @@ namespace Core.Services
                 }
 
                 // Return the new list
+                AppLogger.Info("TwitchDrops", $"Active campaigns fetched successfully. count={updatedResult.Count}");
                 return updatedResult.AsReadOnly();
             }
             catch (Exception ex)
             {
                 Debug.WriteLine($"[Drops] Error fetching active campaigns: {ex}");
+                AppLogger.Error("TwitchDrops", "Fetching active campaigns failed.", ex);
                 return [];
             }
         }

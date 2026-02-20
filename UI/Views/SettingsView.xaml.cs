@@ -2,6 +2,7 @@
 using System.Diagnostics;
 using System.Windows;
 using Core.Managers;
+using Core.Logging;
 using System.IO;
 
 namespace UI.Views
@@ -53,6 +54,30 @@ namespace UI.Views
             Process.Start(psi);
             System.Windows.Application.Current.Shutdown();
             Environment.Exit(0);
+        }
+
+        private void OnOpenLogsFolderClick(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                AppLogger.Initialize();
+
+                string logsDir = AppLogger.LogDirectoryPath;
+                Directory.CreateDirectory(logsDir);
+
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = logsDir,
+                    UseShellExecute = true
+                });
+
+                AppLogger.Info("Settings", $"Opened logs folder: {logsDir}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Settings", "Failed to open logs folder.", ex);
+                MessageBox.Show($"Failed to open logs folder.\n\n{ex.Message}", "Logs", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
     }
 }

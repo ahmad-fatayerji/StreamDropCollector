@@ -2,6 +2,7 @@
 using Microsoft.Web.WebView2.Wpf;
 using System.Diagnostics;
 using System.Text.Json;
+using Core.Logging;
 using Core.Interfaces;
 using System.Windows;
 
@@ -153,7 +154,10 @@ namespace UI.Views
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("WebViewCapture", $"ViewerDropsDashboard response handler parse failure: {ex.Message}");
+                }
             }
 
             responseReceived.DevToolsProtocolEventReceived += Handler;
@@ -165,7 +169,10 @@ namespace UI.Views
             responseReceived.DevToolsProtocolEventReceived -= Handler;
 
             if (result != tcs.Task)
+            {
+                AppLogger.Warn("WebViewCapture", $"Timeout capturing ViewerDropsDashboard response after {timeoutMs}ms.");
                 throw new TimeoutException("Failed to capture ViewerDropsDashboard response");
+            }
 
             return await tcs.Task;
         }
@@ -227,7 +234,10 @@ namespace UI.Views
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("WebViewCapture", $"ViewerDropsProgress response handler parse failure: {ex.Message}");
+                }
             }
 
             responseReceived.DevToolsProtocolEventReceived += Handler;
@@ -239,7 +249,10 @@ namespace UI.Views
             responseReceived.DevToolsProtocolEventReceived -= Handler;
 
             if (result != tcs.Task)
+            {
+                AppLogger.Warn("WebViewCapture", $"Timeout capturing dropCampaignsInProgress response after {timeoutMs}ms.");
                 throw new TimeoutException("Failed to capture dropCampaignsInProgress response");
+            }
 
             return await tcs.Task;
         }
@@ -302,7 +315,10 @@ namespace UI.Views
                         }
                     });
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("WebViewCapture", $"Kick progress response handler parse failure: {ex.Message}");
+                }
             }
 
             responseReceived.DevToolsProtocolEventReceived += Handler;
@@ -314,7 +330,10 @@ namespace UI.Views
             responseReceived.DevToolsProtocolEventReceived -= Handler;
 
             if (completed != tcs.Task)
+            {
+                AppLogger.Warn("WebViewCapture", $"Timeout capturing Kick progress response after {timeoutMs}ms.");
                 throw new TimeoutException("Failed to capture Kick progress response");
+            }
 
             return await tcs.Task;
         }

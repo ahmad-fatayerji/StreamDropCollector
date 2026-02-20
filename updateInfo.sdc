@@ -1,8 +1,13 @@
 {
-  "version": "1.0.10",
+  "version": "1.0.11",
   "type": "Patch",
-  "changelog": "Fixed WebView contention during drops refresh and stream watching",
+  "changelog": "Added comprehensive diagnostic logging and a new 'Open Logs Folder' option in Settings",
   "historic_versions": [
+    {
+      "version": "1.0.10",
+      "type": "Patch",
+      "changelog": "Fixed WebView contention during drops refresh and stream watching"
+    },
     {
       "version": "1.0.9",
       "type": "Patch",

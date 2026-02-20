@@ -1,5 +1,6 @@
 ﻿using System.Collections.ObjectModel;
 using Core.Interfaces;
+using Core.Logging;
 using System.Windows;
 using System.Timers;
 using System.Threading;
@@ -269,6 +270,7 @@ namespace Core.Managers
                 KickProgressChanged?.Invoke(0, 0);
 
                 System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] Starting stream watching process...");
+                AppLogger.Info("Miner", $"StartWatchingStreams invoked. restartedInternally={restartedInternally}, activeCampaigns={ActiveCampaigns.Count}, paused={_isPaused}");
                 if (!restartedInternally)
                     MinerStatusChanged?.Invoke("Starting");
                 else
@@ -286,6 +288,7 @@ namespace Core.Managers
                 if (!ActiveCampaigns.Any())
                 {
                     System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] No active campaigns with progress to make. Stopping stream watching.");
+                    AppLogger.Info("Miner", "No active campaigns found during start; switching to Idle.");
                     MinerStatusChanged?.Invoke("Idle");
                     _currentTwitchCampaign = null;
                     _currentKickCampaign = null;
@@ -366,6 +369,7 @@ namespace Core.Managers
                 if (!ActiveCampaigns.Any(c => c.HasProgressToMake()))
                 {
                     System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
+                    AppLogger.Info("Miner", "No campaigns with progress after claim pass; switching to Idle.");
                     MinerStatusChanged?.Invoke("Idle");
                     _currentTwitchCampaign = null;
                     _currentKickCampaign = null;
@@ -388,6 +392,11 @@ namespace Core.Managers
                         return;
 
                     DropsCampaign? bestTwitch = await SelectBestCampaign(twitchCampaigns);
+
+                    if (bestTwitch == null)
+                    {
+                        AppLogger.Warn("TwitchSelection", $"No Twitch campaign passed eligibility checks. candidates={twitchCampaigns.Count}");
+                    }
 
                     if (token.IsCancellationRequested)
                         return;
@@ -416,6 +425,7 @@ namespace Core.Managers
                             TwitchProgressChanged?.Invoke(initialTwitchPct, initialTwitchDropPct);
 
                             System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Watching Twitch stream: {twitchUrl}");
+                            AppLogger.Info("TwitchSelection", $"Selected Twitch stream '{twitchUrl}' for campaign '{bestTwitch.Name}' ({bestTwitch.Id}).");
 
                             DropsReward? soonestTwitch = bestTwitch.Rewards
                                 .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
@@ -426,9 +436,13 @@ namespace Core.Managers
                             {
                                 DateTime est = DateTime.Now.AddMinutes(soonestTwitch.RequiredMinutes - soonestTwitch.ProgressMinutes);
 
-                            if (est < nextCheckAt)
-                                nextCheckAt = est;
+                                if (est < nextCheckAt)
+                                    nextCheckAt = est;
                             }
+                        }
+                        else
+                        {
+                            AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' produced empty streamer URL; stream not selected.");
                         }
                     }
                 }
@@ -440,6 +454,11 @@ namespace Core.Managers
                         return;
 
                     DropsCampaign? bestKick = await SelectBestCampaign(kickCampaigns);
+
+                    if (bestKick == null)
+                    {
+                        AppLogger.Warn("KickSelection", $"No Kick campaign passed eligibility checks. candidates={kickCampaigns.Count}");
+                    }
 
                     if (token.IsCancellationRequested)
                         return;
@@ -464,6 +483,7 @@ namespace Core.Managers
                             KickProgressChanged?.Invoke(initialKickPct, initialKickDropPct);
 
                             System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Watching Kick stream: {kickUrl}");
+                            AppLogger.Info("KickSelection", $"Selected Kick stream '{kickUrl}' for campaign '{bestKick.Name}' ({bestKick.Id}).");
 
                             DropsReward? soonestKick = bestKick.Rewards
                                 .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
@@ -474,11 +494,20 @@ namespace Core.Managers
                             {
                                 DateTime est = DateTime.Now.AddMinutes(soonestKick.RequiredMinutes - soonestKick.ProgressMinutes);
 
-                            if (est < nextCheckAt)
-                                nextCheckAt = est;
+                                if (est < nextCheckAt)
+                                    nextCheckAt = est;
                             }
                         }
+                        else
+                        {
+                            AppLogger.Warn("KickSelection", $"Kick campaign '{bestKick.Name}' produced empty streamer URL; stream not selected.");
+                        }
                     }
+                }
+
+                if (_currentTwitchCampaign == null && _currentKickCampaign == null)
+                {
+                    AppLogger.Warn("Miner", "No stream selected after evaluation cycle; status may oscillate with health checks.");
                 }
 
                 // Start periodic health check (every 60 seconds)
@@ -493,6 +522,7 @@ namespace Core.Managers
                 {
                     _recheckTimer?.Stop();
                     System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] Re-evaluating streams for active campaigns.");
+                    AppLogger.Info("Miner", "Scheduled re-evaluation triggered.");
                     await StartWatchingStreams(true); // Re-evaluate everything
                 };
 
@@ -500,6 +530,7 @@ namespace Core.Managers
                 _recheckTimer.Start();
 
                 System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Next stream re-evaluation in ~{delayMs / 60000:F1} minutes at {nextCheckAt:u}");
+                AppLogger.Info("Miner", $"Next re-evaluation in {delayMs / 1000:F0}s at {nextCheckAt:u}. twitchSelected={_currentTwitchCampaign != null}, kickSelected={_currentKickCampaign != null}");
                 MinerStatusChanged?.Invoke("Mining");
             }
             finally
@@ -581,6 +612,7 @@ namespace Core.Managers
 
                     System.Diagnostics.Debug.WriteLine($"[Health Check] Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
                     System.Diagnostics.Debug.WriteLine($"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory}");
+                    AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
 
                     // Group campaigns by platform
                     List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
@@ -590,8 +622,9 @@ namespace Core.Managers
                      || kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory))
                     {
                         System.Diagnostics.Debug.WriteLine("[Health Check] One or both streams offline -> forcing re-evaluation");
+                        AppLogger.Warn("HealthCheck", "Forcing re-evaluation due to stream health/category mismatch.");
                         _streamHealthTimer?.Stop();
-                        await StartWatchingStreams(); // This will restart everything safely
+                        await StartWatchingStreams(true); // This will restart everything safely
                     }
                 });
             };
@@ -647,7 +680,12 @@ namespace Core.Managers
                     string categoryResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ExecuteScriptAsync(getStreamerCategoryJs));
 
                     if (categoryResult.Contains(campaign.Slug, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLogger.Info("CampaignCheck", $"Twitch campaign '{campaign.Name}' passed category check. category='{categoryResult.Trim('"')}', slug='{campaign.Slug}'");
                         return campaign;
+                    }
+
+                    AppLogger.Warn("CampaignCheck", $"Twitch campaign '{campaign.Name}' failed category check. category='{categoryResult.Trim('"')}', slug='{campaign.Slug}'");
                 }
                 else if (campaign.Platform == Platform.Kick)
                 {
@@ -673,7 +711,12 @@ namespace Core.Managers
                     string categoryResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ExecuteScriptAsync(getStreamerCategoryJs));
 
                     if (categoryResult.Contains(campaign.Slug, StringComparison.OrdinalIgnoreCase))
+                    {
+                        AppLogger.Info("CampaignCheck", $"Kick campaign '{campaign.Name}' passed category check. category='{categoryResult.Trim('"')}', slug='{campaign.Slug}'");
                         return campaign;
+                    }
+
+                    AppLogger.Warn("CampaignCheck", $"Kick campaign '{campaign.Name}' failed category check. category='{categoryResult.Trim('"')}', slug='{campaign.Slug}'");
                 }
             }
 
@@ -1005,7 +1048,7 @@ namespace Core.Managers
 
             if (!categoryResult.Equals(campaign.Slug, StringComparison.OrdinalIgnoreCase))
             {
-                // This happens if the streamer is online, but not streaming the game associated with the campaign. In this case, we need to select the next best streamer, and retry again.
+                AppLogger.Warn("TwitchSelection", $"Initial Twitch URL category mismatch for campaign '{campaign.Name}'. category='{categoryResult.Trim('"')}', slug='{campaign.Slug}'");
             }
 
             string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ExecuteScriptAsync(getFirstStreamerJs));
@@ -1016,6 +1059,8 @@ namespace Core.Managers
                 streamerUrl = firstStreamerRawResult?.Trim().Trim('"') ?? "";
 
             System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Selected Twitch streamer URL for campaign '{campaign.Name}': {streamerUrl}");
+            if (string.IsNullOrWhiteSpace(streamerUrl))
+                AppLogger.Warn("TwitchSelection", $"No Twitch streamer URL could be resolved for campaign '{campaign.Name}'.");
             TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
 
             return streamerUrl;

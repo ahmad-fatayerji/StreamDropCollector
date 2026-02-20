@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Text.Json;
+using Core.Logging;
 using Core.Interfaces;
 using Core.Models;
 using Core.Enums;
@@ -33,6 +34,7 @@ namespace Core.Services
         {
             try
             {
+                AppLogger.Info("KickDrops", "Fetching active campaigns started.");
                 await host.EnsureInitializedAsync();
 
                 // 1. Get full campaign data (Channels, Rewards, etc.)
@@ -42,11 +44,17 @@ namespace Core.Services
                 string json = rawJson.Trim('"').Replace("\\n", "").Replace("\\\"", "\"");
 
                 if (string.IsNullOrWhiteSpace(json) || json == "null")
+                {
+                    AppLogger.Warn("KickDrops", "Kick campaign API returned empty payload.");
                     return Array.Empty<DropsCampaign>().AsReadOnly();
+                }
 
                 JsonDocument doc = JsonDocument.Parse(json);
                 if (!doc.RootElement.TryGetProperty("data", out JsonElement dataArray))
+                {
+                    AppLogger.Warn("KickDrops", "Kick campaign API payload missing 'data' property.");
                     return Array.Empty<DropsCampaign>().AsReadOnly();
+                }
 
                 List<DropsCampaign> campaigns = new List<DropsCampaign>();
 
@@ -124,6 +132,7 @@ namespace Core.Services
                     catch (TimeoutException)
                     {
                         Debug.WriteLine("[Kick Drops] Initial attempt to capture /progress response timed out, refreshing and retrying...");
+                        AppLogger.Warn("KickDrops", "Progress capture timed out; forcing refresh and retrying.");
                         await host.ForceRefreshAsync();
                     }
 
@@ -169,10 +178,12 @@ namespace Core.Services
                 }
 
                 Debug.WriteLine($"[Kick Drops] LOADED {campaigns.Count} campaigns with progress");
+                AppLogger.Info("KickDrops", $"Active campaigns fetched successfully. count={campaigns.Count}");
                 return campaigns.AsReadOnly();
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                AppLogger.Error("KickDrops", "Fetching active campaigns failed.", ex);
                 return [];
             }
         }

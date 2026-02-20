@@ -5,6 +5,7 @@ using System.Windows.Threading;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Windows;
+using Core.Logging;
 using Core.Managers;
 using Core.Services;
 using Core.Models;
@@ -333,18 +334,21 @@ namespace UI.Views
         {
             // Cancel any previous in-flight load
             _currentLoadCts?.Cancel();
+            AppLogger.Info("Dashboard", "LoadDropsAsync invoked; previous load cancellation requested if active.");
 
             // Wait if another load is already running
             await _loadDropsSemaphore.WaitAsync();
             try
             {
                 await DropsInventoryManager.Instance.PauseWatchingAsync();
+                AppLogger.Info("Dashboard", "Watcher paused for campaign refresh.");
 
                 using CancellationTokenSource cts = new CancellationTokenSource();
                 _currentLoadCts = cts;
 
                 if (_kickService.Status != ConnectionStatus.Connected && _twitchService.Status != ConnectionStatus.Connected)
                 {
+                    AppLogger.Warn("Dashboard", "Campaign load skipped: neither Twitch nor Kick is connected.");
                     MinerStatus = "Need login";
                     MinerStatusDetails = "Please login to Twitch and/or Kick to load campaigns.";
                     return;
@@ -356,6 +360,7 @@ namespace UI.Views
                 _activeCampaigns.Clear();
 
                 IReadOnlyList<DropsCampaign> allCampaigns = await _dropsService.GetAllActiveCampaignsAsync(_kickWebView, _kickService.Status, _twitchWebView, _twitchService.Status, _twitchGqlService, cts.Token);
+                AppLogger.Info("Dashboard", $"Campaign load completed. totalCampaigns={allCampaigns.Count}, twitchStatus={_twitchService.Status}, kickStatus={_kickService.Status}");
 
                 foreach (DropsCampaign? c in allCampaigns.OrderBy(x => x.GameName))
                     _activeCampaigns.Add(c);
@@ -368,6 +373,7 @@ namespace UI.Views
             catch (OperationCanceledException) when (_currentLoadCts?.IsCancellationRequested == true)
             {
                 // Expected when a new load cancels the old one
+                AppLogger.Info("Dashboard", "LoadDropsAsync canceled due to superseding refresh request.");
                 return;
             }
             catch (Exception ex)
@@ -375,12 +381,14 @@ namespace UI.Views
                 MinerStatus = "Failed to load campaigns";
                 MinerStatusDetails = ex.Message;
                 Debug.WriteLine($"[Drops] Load failed: {ex}");
+                AppLogger.Error("Dashboard", "LoadDropsAsync failed.", ex);
             }
             finally
             {
                 _loadDropsSemaphore.Release();
                 _currentLoadCts = null;
                 await DropsInventoryManager.Instance.ResumeWatchingAsync();
+                AppLogger.Info("Dashboard", "Watcher resumed after campaign refresh.");
             }
         }
         /// <summary>

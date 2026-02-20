@@ -373,6 +373,24 @@
                     </StackPanel>
                 </Border>
 
+                <!-- LOGS -->
+                <Border Background="{DynamicResource CardBackgroundBrush}"
+                        CornerRadius="10" Padding="24" Margin="0,0,0,24"
+                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="Logs"
+                                   Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <TextBlock Text="Open the folder containing diagnostic logs for support tickets."
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   FontSize="13" Margin="0,0,0,12"/>
+                        <Button Content="Open Logs Folder"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Left"
+                                Click="OnOpenLogsFolderClick"/>
+                    </StackPanel>
+                </Border>
+
                 <!-- DANGER ZONE -->
                 <Border Background="{DynamicResource CardBackgroundBrush}"
                         CornerRadius="10" Padding="24" Margin="0,0,0,24"

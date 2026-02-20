@@ -3,6 +3,7 @@ using Microsoft.Win32;
 using System.IO.Pipes;
 using System.Windows;
 using Core.Managers;
+using Core.Logging;
 using System.IO;
 
 namespace UI
@@ -31,6 +32,9 @@ namespace UI
 
         protected override void OnStartup(StartupEventArgs e)
         {
+            AppLogger.Initialize();
+            AppLogger.Info("App", "Application startup invoked.");
+
             bool ignoreMutexRule = e.Args.Any(a => a.Equals("--updating", StringComparison.OrdinalIgnoreCase) || a.Equals("--updated", StringComparison.OrdinalIgnoreCase));
 
             _instanceMutex = new Mutex(true, MutexName, out bool createdNew);
@@ -38,6 +42,7 @@ namespace UI
             if (!createdNew && !ignoreMutexRule)
             {
                 // Notify existing instance
+                AppLogger.Warn("App", "Second instance detected; signaling existing instance and shutting down.");
                 TryActivateExistingInstance();
                 Shutdown();
                 return;
@@ -149,6 +154,7 @@ namespace UI
 
         private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)
         {
+            AppLogger.Error("App", "Unhandled UI thread exception.", e.Exception);
             System.Windows.MessageBox.Show($"An undefined error has happened, please contact tsgsOFFICIAL to resolve this issue.\n\nInclude the following Error Message: {e.Exception.Message}", "Undefined Error", MessageBoxButton.OK, MessageBoxImage.Error);
 
             e.Handled = true; // Prevents the application from crashing
@@ -158,6 +164,7 @@ namespace UI
         {
             if (e.ExceptionObject is Exception ex)
             {
+                AppLogger.Error("App", "Unhandled non-UI exception.", ex);
                 System.Windows.MessageBox.Show($"A critical error has happened, please contact tsgsOFFICIAL to resolve this issue.\n\nInclude the following Error Message: {ex.Message}", "Critical Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }

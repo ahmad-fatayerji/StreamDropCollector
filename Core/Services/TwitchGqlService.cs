@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Net.Http;
 using Core.Interfaces;
+using Core.Logging;
 using System.Net;
 
 namespace Core.Services
@@ -174,6 +175,7 @@ namespace Core.Services
         /// reward was successfully claimed; otherwise, <see langword="false"/>.</returns>
         public async Task<bool> ClaimDropAsync(string campaignId, string rewardId, CancellationToken ct = default)
         {
+            AppLogger.Info("TwitchGql", $"ClaimDrop started. campaignId={campaignId}, rewardId={rewardId}");
             await System.Windows.Application.Current.Dispatcher.InvokeAsync(async () => await RefreshHeadersAsync(ct));
 
             // Step 1. Construct the payload, according to the above format
@@ -220,7 +222,10 @@ namespace Core.Services
             string jsonText = await response.Content.ReadAsStringAsync(ct);
 
             if (!response.IsSuccessStatusCode || jsonText.Contains("\"errors\""))
+            {
+                AppLogger.Warn("TwitchGql", $"ClaimDrop failed. status={(int)response.StatusCode}, hasErrors={jsonText.Contains("\"errors\"")}");
                 return false;
+            }
 
             response.EnsureSuccessStatusCode();
             JsonNode? root = JsonNode.Parse(jsonText);
@@ -231,6 +236,8 @@ namespace Core.Services
                         ["isUserAccountConnected"]?
                         .GetValue<bool>()
                   ?? false;
+
+            AppLogger.Info("TwitchGql", $"ClaimDrop completed. success={isConnected}");
 
             return isConnected;
         }
@@ -299,6 +306,7 @@ namespace Core.Services
 
             if (!response.IsSuccessStatusCode || jsonText.Contains("\"errors\""))
             {
+                AppLogger.Warn("TwitchGql", $"QueryFullDropsDashboard initial call failed. status={(int)response.StatusCode}, hasErrors={jsonText.Contains("\"errors\"")}. Refreshing headers and retrying.");
                 await RefreshHeadersAsync(ct);
 
                 using HttpRequestMessage newRequest = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
@@ -317,12 +325,16 @@ namespace Core.Services
                 jsonText = await response.Content.ReadAsStringAsync(ct);
 
                 if (jsonText.Contains("\"errors\""))
+                {
+                    AppLogger.Error("TwitchGql", "QueryFullDropsDashboard retry still returned GraphQL errors.");
                     throw new InvalidOperationException("Failed integrity, please wait a while and try again.");
+                }
             }
 
             response.EnsureSuccessStatusCode();
 
             JsonArray responseArray = JsonNode.Parse(jsonText)!.AsArray();
+            AppLogger.Info("TwitchGql", "QueryFullDropsDashboard completed successfully.");
             return responseArray;
         }
         /// <summary>
@@ -397,6 +409,7 @@ namespace Core.Services
                 // Auto-retry on integrity fail
                 if (!response.IsSuccessStatusCode || jsonText.Contains("\"errors\""))
                 {
+                    AppLogger.Warn("TwitchGql", $"DropCampaignDetails batch call failed. batchStart={i}, status={(int)response.StatusCode}, hasErrors={jsonText.Contains("\"errors\"")}. Refreshing headers and retrying.");
                     await RefreshHeadersAsync(ct);
                     request.Headers.Remove("Client-Integrity");
                     request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
@@ -417,6 +430,7 @@ namespace Core.Services
             }
 
             Debug.WriteLine($"[GQL] Fetched {results.Count} campaigns with full details");
+            AppLogger.Info("TwitchGql", $"DropCampaignDetails fetch completed. totalResults={results.Count}");
             return results;
         }
         /// <summary>
