@@ -33,7 +33,8 @@ namespace UI
         protected override void OnStartup(StartupEventArgs e)
         {
             AppLogger.Initialize();
-            AppLogger.Info("App", "Application startup invoked.");
+            // Log app startup + Version
+            AppLogger.Info("App", $"Starting StreamDropCollector version {GetType().Assembly.GetName().Version}");
 
             bool ignoreMutexRule = e.Args.Any(a => a.Equals("--updating", StringComparison.OrdinalIgnoreCase) || a.Equals("--updated", StringComparison.OrdinalIgnoreCase));
 

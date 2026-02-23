@@ -30,6 +30,7 @@ namespace Core.Managers
         private bool _autoClaimRewards = true;
         private bool _notifyOnReadyToClaim;
         private bool _notifyOnAutoClaimed = true;
+        private bool _verboseDebugLogging;
         private bool _updateAvailable = false;
         private bool _notifyOnNewUpdateAvailable = true;
         private DateTime? _lastUpdateCheck = null;
@@ -167,6 +168,14 @@ namespace Core.Managers
                 else
                     SetField(ref _notifyOnAutoClaimed, value);
             }
+        }
+        /// <summary>
+        /// Gets or sets a value indicating whether verbose diagnostic logging is enabled.
+        /// </summary>
+        public bool VerboseDebugLogging
+        {
+            get => _verboseDebugLogging;
+            set => SetField(ref _verboseDebugLogging, value);
         }
         /// <summary>
         /// Gets or sets a value indicating whether a software update is available.
@@ -320,6 +329,7 @@ namespace Core.Managers
                     AutoClaimRewards = settings.AutoClaimRewards;
                     NotifyOnReadyToClaim = settings.NotifyOnReadyToClaim;
                     NotifyOnAutoClaimed = settings.NotifyOnAutoClaimed;
+                    VerboseDebugLogging = settings.VerboseDebugLogging;
                     NotifyOnNewUpdateAvailable = settings.NotifyOnNewUpdateAvailable;
                     _lastUpdateCheck = settings.LastUpdateCheck;
                 }
@@ -350,6 +360,7 @@ namespace Core.Managers
                     AutoClaimRewards = AutoClaimRewards,
                     NotifyOnReadyToClaim = NotifyOnReadyToClaim,
                     NotifyOnAutoClaimed = NotifyOnAutoClaimed,
+                    VerboseDebugLogging = VerboseDebugLogging,
                     NotifyOnNewUpdateAvailable = NotifyOnNewUpdateAvailable,
                     LastUpdateCheck = _lastUpdateCheck
                 };

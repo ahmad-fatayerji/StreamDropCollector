@@ -7,9 +7,9 @@
   "targets": {
     ".NETCoreApp,Version=v10.0": {},
     ".NETCoreApp,Version=v10.0/win-x64": {
-      "Stream Drop Collector/1.0.12": {
+      "Stream Drop Collector/1.0.13": {
         "dependencies": {
-          "Core": "1.0.12",
+          "Core": "1.0.13",
           "Hardcodet.NotifyIcon.Wpf": "2.0.1",
           "Microsoft.Web.WebView2": "1.0.3650.58",
           "Microsoft.Web.WebView2.Core": "1.0.3650.58",
@@ -1038,15 +1038,15 @@
           }
         }
       },
-      "Core/1.0.12": {
+      "Core/1.0.13": {
         "dependencies": {
           "Microsoft.Toolkit.Uwp.Notifications": "7.1.3",
           "Microsoft.Web.WebView2": "1.0.3650.58"
         },
         "runtime": {
           "Core.dll": {
-            "assemblyVersion": "1.0.12.0",
-            "fileVersion": "1.0.12.0"
+            "assemblyVersion": "1.0.13.0",
+            "fileVersion": "1.0.13.0"
           }
         }
       },
@@ -1077,7 +1077,7 @@
     }
   },
   "libraries": {
-    "Stream Drop Collector/1.0.12": {
+    "Stream Drop Collector/1.0.13": {
       "type": "project",
       "serviceable": false,
       "sha512": ""
@@ -1118,7 +1118,7 @@
       "path": "microsoft.web.webview2/1.0.3650.58",
       "hashPath": "microsoft.web.webview2.1.0.3650.58.nupkg.sha512"
     },
-    "Core/1.0.12": {
+    "Core/1.0.13": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

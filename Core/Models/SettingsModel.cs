@@ -12,6 +12,7 @@ namespace Core.Models
         public bool NotifyOnDropUnlocked { get; set; }
         public bool NotifyOnReadyToClaim { get; set; }
         public bool NotifyOnAutoClaimed { get; set; }
+        public bool VerboseDebugLogging { get; set; }
         public bool UpdateAvailable { get; set; }
         public bool NotifyOnNewUpdateAvailable { get; set; }
         public DateTime? LastUpdateCheck { get; set; }

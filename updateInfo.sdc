@@ -1,8 +1,14 @@
 {
-  "version": "1.0.12",
+  "version": "1.0.13",
   "type": "Patch",
-  "changelog": "Added comprehensive diagnostic logging and a new 'Open Logs Folder' option in Settings",
+  "description": "Improved stream selection diagnostics and fixed reward vs campaign progress tracking behavior.",
+  "changelog": "Added verbose debug toggle in Settings, improved Twitch/Kick selection diagnostics, and fixed reward progress percentage tracking while keeping campaign progress tracking intact.",
   "historic_versions": [
+    {
+      "version": "1.0.12",
+      "type": "Patch",
+      "changelog": "Added comprehensive diagnostic logging and a new 'Open Logs Folder' option in Settings"
+    },
     {
       "version": "1.0.11",
       "type": "Patch",

@@ -384,6 +384,26 @@
                         <TextBlock Text="Open the folder containing diagnostic logs for support tickets."
                                    Foreground="{DynamicResource TextMutedBrush}"
                                    FontSize="13" Margin="0,0,0,12"/>
+
+                        <Border Background="{DynamicResource MainBackgroundBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="12"
+                                Margin="0,0,0,12">
+                            <StackPanel>
+                                <CheckBox IsChecked="{Binding VerboseDebugLogging, Mode=TwoWay}"
+                                          Style="{StaticResource ModernCheckBoxStyle}"
+                                          Content="Verbose debug logging"
+                                          Margin="0,0,0,6"/>
+                                <TextBlock Text="Adds detailed miner + reward percentage trace logs. Enable only while troubleshooting."
+                                           Foreground="{DynamicResource TextMutedBrush}"
+                                           FontSize="12"
+                                           TextWrapping="Wrap"
+                                           Margin="32,0,0,0"/>
+                            </StackPanel>
+                        </Border>
+
                         <Button Content="Open Logs Folder"
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Left"
