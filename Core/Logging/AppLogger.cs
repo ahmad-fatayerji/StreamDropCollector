@@ -10,10 +10,7 @@ namespace Core.Logging
         private static readonly object _sync = new();
         private static string? _logFilePath;
 
-        public static string LogDirectoryPath => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "StreamDropCollector",
-            "logs");
+        public static string LogDirectoryPath => Path.Combine(Environment.ExpandEnvironmentVariables("%APPDATA%"), "Stream Drop Collector", "logs");
 
         public static string? LogFilePath => _logFilePath;
 

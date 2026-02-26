@@ -455,10 +455,10 @@ namespace Core.Services
 
                     // Find all campaign containers
                     const parentContainer = document.querySelector("".Layout-sc-1xcs6mc-0.gJZZlL.drops-root__content"")
-                    const containers = parentContainer.children[4].querySelectorAll('.Layout-sc-1xcs6mc-0.iSIERH');
+                    const containers = parentContainer.children[1].querySelectorAll('.Layout-sc-1xcs6mc-0.iSIERH');
             
                     if (containers.length === 0) {
-                        console.log('No campaign container not found');
+                        console.log('No campaign container found');
                         return;
                     }
 
@@ -474,7 +474,7 @@ namespace Core.Services
             ";
 
             // 3. Capture the real payload
-            string payloadJson = await _host.CaptureGqlRequestBodyContainingAsyncWithRetry("DropCampaignDetails", 5000, 10, clickScript, ct);
+            string payloadJson = await _host.CaptureGqlRequestBodyContainingAsyncWithRetry("DropCampaignDetails", 8000, 10, clickScript, ct);
 
             // 4. Parse just the hash
             JsonArray payload = JsonNode.Parse(payloadJson)!.AsArray();
