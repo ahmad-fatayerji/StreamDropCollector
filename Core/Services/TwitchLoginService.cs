@@ -8,7 +8,7 @@ namespace Core.Services
     {
         public override async Task ValidateCredentialsAsync(IWebViewHost host)
         {
-            System.Diagnostics.Debug.WriteLine("[TwitchLogin] Validating credentials...");
+            AppLogger.Debug("TwitchLogin", "Validating credentials...");
             AppLogger.Info("TwitchLogin", "Credential validation started.");
             UpdateStatus(ConnectionStatus.Connecting);
 

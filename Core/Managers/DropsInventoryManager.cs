@@ -296,7 +296,7 @@ namespace Core.Managers
                 KickChannelChanged?.Invoke(string.Empty);
                 KickProgressChanged?.Invoke(0, 0);
 
-                System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] Starting stream watching process...");
+                AppLogger.Debug("Miner", "[DropsInventoryManager] Starting stream watching process...");
                 AppLogger.Info("Miner", $"StartWatchingStreams invoked. restartedInternally={restartedInternally}, activeCampaigns={ActiveCampaigns.Count}, paused={_isPaused}");
                 if (!restartedInternally)
                     MinerStatusChanged?.Invoke("Starting");
@@ -314,7 +314,7 @@ namespace Core.Managers
 
                 if (!ActiveCampaigns.Any())
                 {
-                    System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] No active campaigns with progress to make. Stopping stream watching.");
+                    AppLogger.Debug("Miner", "[DropsInventoryManager] No active campaigns with progress to make. Stopping stream watching.");
                     AppLogger.Info("Miner", "No active campaigns found during start; switching to Idle.");
                     MinerStatusChanged?.Invoke("Idle");
                     _currentTwitchCampaign = null;
@@ -395,7 +395,7 @@ namespace Core.Managers
                 // If nothing left to progress after claiming, stop and reset
                 if (!ActiveCampaigns.Any(c => c.HasProgressToMake()))
                 {
-                    System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
+                    AppLogger.Debug("Miner", "[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
                     AppLogger.Info("Miner", "No campaigns with progress after claim pass; switching to Idle.");
                     MinerStatusChanged?.Invoke("Idle");
                     _currentTwitchCampaign = null;
@@ -489,7 +489,7 @@ namespace Core.Managers
                         byte initialTwitchDropPct = CalculateLiveDropProgress(bestTwitch, _twitchDropWatchedSeconds);
                         TwitchProgressChanged?.Invoke(initialTwitchPct, initialTwitchDropPct);
 
-                        System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Watching Twitch stream: {twitchUrl}");
+                        AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Watching Twitch stream: {twitchUrl}");
                         AppLogger.Info("TwitchSelection", $"Selected Twitch stream '{twitchUrl}' for campaign '{bestTwitch.Name}' ({bestTwitch.Id}).");
 
                         DropsReward? soonestTwitch = bestTwitch.Rewards
@@ -588,7 +588,7 @@ namespace Core.Managers
                         byte initialKickDropPct = CalculateLiveDropProgress(bestKick, _kickDropWatchedSeconds);
                         KickProgressChanged?.Invoke(initialKickPct, initialKickDropPct);
 
-                        System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Watching Kick stream: {kickUrl}");
+                        AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Watching Kick stream: {kickUrl}");
                         AppLogger.Info("KickSelection", $"Selected Kick stream '{kickUrl}' for campaign '{bestKick.Name}' ({bestKick.Id}).");
 
                         DropsReward? soonestKick = bestKick.Rewards
@@ -629,7 +629,7 @@ namespace Core.Managers
                 _recheckTimer.Elapsed += async (s, e) =>
                 {
                     _recheckTimer?.Stop();
-                    System.Diagnostics.Debug.WriteLine("[DropsInventoryManager] Re-evaluating streams for active campaigns.");
+                    AppLogger.Debug("Miner", "[DropsInventoryManager] Re-evaluating streams for active campaigns.");
                     AppLogger.Info("Miner", "Scheduled re-evaluation triggered.");
                     await StartWatchingStreams(true); // Re-evaluate everything
                 };
@@ -637,7 +637,7 @@ namespace Core.Managers
                 _recheckTimer.AutoReset = false;
                 _recheckTimer.Start();
 
-                System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Next stream re-evaluation in ~{delayMs / 60000:F1} minutes at {nextCheckAt:u}");
+                AppLogger.Debug("Miner", $"[DropsInventoryManager] Next stream re-evaluation in ~{delayMs / 60000:F1} minutes at {nextCheckAt:u}");
                 AppLogger.Info("Miner", $"Next re-evaluation in {delayMs / 1000:F0}s at {nextCheckAt:u}. twitchSelected={_currentTwitchCampaign != null}, kickSelected={_currentKickCampaign != null}");
                 MinerStatusChanged?.Invoke(_currentTwitchCampaign != null || _currentKickCampaign != null ? "Mining" : "Idle");
             }
@@ -718,8 +718,8 @@ namespace Core.Managers
                     bool kickOnline = _currentKickCampaign != null && await IsKickStreamOnline();
                     bool kickCorrectCategory = _currentKickCampaign != null && await IsKickStreamCategoryCorrect();
 
-                    System.Diagnostics.Debug.WriteLine($"[Health Check] Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
-                    System.Diagnostics.Debug.WriteLine($"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory}");
+                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
+                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory}");
                     AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
 
                     // Group campaigns by platform
@@ -729,7 +729,7 @@ namespace Core.Managers
                     if (twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory)
                      || kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory))
                     {
-                        System.Diagnostics.Debug.WriteLine("[Health Check] One or both streams offline -> forcing re-evaluation");
+                        AppLogger.Debug("HealthCheck", "[Health Check] One or both streams offline -> forcing re-evaluation");
                         AppLogger.Warn("HealthCheck", "Forcing re-evaluation due to stream health/category mismatch.");
                         _streamHealthTimer?.Stop();
                         await StartWatchingStreams(true); // This will restart everything safely
@@ -786,9 +786,12 @@ namespace Core.Managers
             try
             {
                 string result = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView.ExecuteScriptAsync(js));
-                System.Diagnostics.Debug.WriteLine("[Kick] Quality set to lowest: 160p 30");
+                AppLogger.Debug("KickSelection", "[Kick] Quality set to lowest: 160p 30");
             }
-            catch { /* Best effort */ }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickSelection", $"Failed setting Kick quality to lowest. {ex.Message}");
+            }
         }
         /// <summary>
         /// Attempts to set the Twitch stream quality to the lowest available option using the embedded web view.
@@ -812,9 +815,12 @@ namespace Core.Managers
             try
             {
                 string result = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView.ExecuteScriptAsync(js));
-                System.Diagnostics.Debug.WriteLine("[Twitch] Quality set to 160p 30");
+                AppLogger.Debug("TwitchSelection", "[Twitch] Quality set to 160p 30");
             }
-            catch { /* Best effort */ }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchSelection", $"Failed setting Twitch quality to lowest. {ex.Message}");
+            }
         }
         /// <summary>
         /// Attempts to automatically dismiss the mature content gate overlay in the Kick web view, if present.
@@ -847,9 +853,12 @@ namespace Core.Managers
             {
                 string result = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView.ExecuteScriptAsync(js));
                 if (result?.Trim('"').Equals("true", StringComparison.OrdinalIgnoreCase) == true)
-                    System.Diagnostics.Debug.WriteLine("[Kick] Auto-accepted mature content gate.");
+                    AppLogger.Debug("KickSelection", "[Kick] Auto-accepted mature content gate.");
             }
-            catch { /* Ignore – not critical */ }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickSelection", $"Failed dismissing Kick mature content gate. {ex.Message}");
+            }
         }
         /// <summary>
         /// Attempts to automatically dismiss the mature content gate overlay in the Twitch web view by simulating a
@@ -881,9 +890,12 @@ namespace Core.Managers
             {
                 string result = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView.ExecuteScriptAsync(js));
                 if (result?.Trim('"').Equals("true", StringComparison.OrdinalIgnoreCase) == true)
-                    System.Diagnostics.Debug.WriteLine("[Twitch] Auto-accepted mature content gate.");
+                    AppLogger.Debug("TwitchSelection", "[Twitch] Auto-accepted mature content gate.");
             }
-            catch { /* Ignore – not critical */ }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchSelection", $"Failed dismissing Twitch mature content gate. {ex.Message}");
+            }
         }
         /// <summary>
         /// Determines whether the Kick stream is currently online by evaluating the presence of a 'LIVE' indicator in
@@ -912,7 +924,7 @@ namespace Core.Managers
                 .Trim('"')
                 .Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
 
-            System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Kick stream online status: {isOnline}");
+            AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Kick stream online status: {isOnline}");
             return isOnline;
         }
         /// <summary>
@@ -942,7 +954,7 @@ namespace Core.Managers
                 .Trim('"')
                 .Contains(_currentKickCampaign?.Slug ?? "", StringComparison.OrdinalIgnoreCase) ?? false;
 
-            System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Kick stream category correct status: {isCorrect}");
+            AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Kick stream category correct status: {isCorrect}");
             return isCorrect;
         }
         /// <summary>
@@ -972,7 +984,7 @@ namespace Core.Managers
                 .Trim('"')
                 .Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
 
-            System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Twitch stream online status: {isOnline}");
+            AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Twitch stream online status: {isOnline}");
             return isOnline;
         }
         /// <summary>
@@ -1001,7 +1013,7 @@ namespace Core.Managers
             string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView.ExecuteScriptAsync(js));
             bool isCorrect = TwitchCategoryHrefMatchesCampaign(rawResult, _currentTwitchCampaign?.Slug);
 
-            System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Twitch stream category correct status: {isCorrect}");
+            AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Twitch stream category correct status: {isCorrect}");
             return isCorrect;
         }
         /// <summary>
@@ -1072,7 +1084,7 @@ namespace Core.Managers
                 streamerUrl = rawResult?.Trim().Trim('"') ?? "";
             }
 
-            System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Selected Kick streamer URL for campaign '{campaign.Name}': {streamerUrl}");
+            AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Selected Kick streamer URL for campaign '{campaign.Name}': {streamerUrl}");
             KickChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
 
             return streamerUrl;
@@ -1137,7 +1149,7 @@ namespace Core.Managers
                 streamerUrl = firstStreamerRawResult?.Trim().Trim('"') ?? "";
             }
 
-            System.Diagnostics.Debug.WriteLine($"[DropsInventoryManager] Selected Twitch streamer URL for campaign '{campaign.Name}': {streamerUrl}");
+            AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for campaign '{campaign.Name}': {streamerUrl}");
             if (string.IsNullOrWhiteSpace(streamerUrl))
                 AppLogger.Warn("TwitchSelection", $"No Twitch streamer URL could be resolved for campaign '{campaign.Name}'.");
             TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
@@ -1180,8 +1192,9 @@ namespace Core.Managers
                 // Kick URLs are typically in the format /{streamerName}
                 return path.Split('/')[0];
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Warn("StreamSelection", $"Failed extracting streamer name from url '{url}'. {ex.Message}");
                 return string.Empty;
             }
         }

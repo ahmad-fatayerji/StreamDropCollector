@@ -1,5 +1,4 @@
-﻿using System.Diagnostics;
-using System.Text.Json;
+﻿using System.Text.Json;
 using Core.Logging;
 using Core.Interfaces;
 using Core.Models;
@@ -129,10 +128,9 @@ namespace Core.Services
                     {
                         rawProgress = await host.CaptureProgressResponseAsync(10000, ct);
                     }
-                    catch (TimeoutException)
+                    catch (TimeoutException ex)
                     {
-                        Debug.WriteLine("[Kick Drops] Initial attempt to capture /progress response timed out, refreshing and retrying...");
-                        AppLogger.Warn("KickDrops", "Progress capture timed out; forcing refresh and retrying.");
+                        AppLogger.Warn("KickDrops", $"Progress capture timed out; forcing refresh and retrying. {ex.Message}");
                         await host.ForceRefreshAsync();
                     }
 
@@ -177,7 +175,7 @@ namespace Core.Services
                     }
                 }
 
-                Debug.WriteLine($"[Kick Drops] LOADED {campaigns.Count} campaigns with progress");
+                AppLogger.Debug("KickDrops", $"LOADED {campaigns.Count} campaigns with progress");
                 AppLogger.Info("KickDrops", $"Active campaigns fetched successfully. count={campaigns.Count}");
                 return campaigns.AsReadOnly();
             }

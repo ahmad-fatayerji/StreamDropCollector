@@ -1,6 +1,5 @@
 ﻿using System.Text.Json.Nodes;
 using System.Net.Http.Json;
-using System.Diagnostics;
 using System.Text.Json;
 using System.Net.Http;
 using Core.Interfaces;
@@ -58,7 +57,7 @@ namespace Core.Services
             {
                 try
                 {
-                    Debug.WriteLine($"[RefreshHeaders] Attempt {attempt}/{maxAttempts} – Navigating to drops/campaigns");
+                    AppLogger.Debug("TwitchGql", $"[RefreshHeaders] Attempt {attempt}/{maxAttempts} – Navigating to drops/campaigns");
 
                     // Fresh navigation every attempt (important for clean integrity token)
                     await _host.NavigateAsync($"https://www.twitch.tv/drops/campaigns?t={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
@@ -93,12 +92,12 @@ namespace Core.Services
                     _deviceId = deviceId ?? _deviceId; // Device-ID is optional – keep old if missing
                     _accessToken = accessToken;
 
-                    Debug.WriteLine($"[RefreshHeaders] Success on attempt {attempt} – Got fresh headers");
+                    AppLogger.Debug("TwitchGql", $"[RefreshHeaders] Success on attempt {attempt} – Got fresh headers");
                     return;
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {
-                    Debug.WriteLine($"[RefreshHeaders] Attempt {attempt} failed: {ex.Message}. Retrying in {baseDelayMs * attempt}ms...");
+                    AppLogger.Warn("TwitchGql", $"[RefreshHeaders] Attempt {attempt} failed: {ex.Message}. Retrying in {baseDelayMs * attempt}ms...");
 
                     // Exponential backoff: 5s -> 10s -> 15s
                     await Task.Delay(baseDelayMs * attempt, ct);
@@ -402,7 +401,7 @@ namespace Core.Services
                 string jsonText = await response.Content.ReadAsStringAsync(ct);
 
                 // print the payload as json text for debugging
-                Debug.WriteLine(request.Content != null
+                AppLogger.Debug("TwitchGql", request.Content != null
                     ? await request.Content.ReadAsStringAsync(ct)
                     : "No request content");
 
@@ -429,7 +428,7 @@ namespace Core.Services
                 }
             }
 
-            Debug.WriteLine($"[GQL] Fetched {results.Count} campaigns with full details");
+            AppLogger.Debug("TwitchGql", $"[GQL] Fetched {results.Count} campaigns with full details");
             AppLogger.Info("TwitchGql", $"DropCampaignDetails fetch completed. totalResults={results.Count}");
             return results;
         }
@@ -488,7 +487,7 @@ namespace Core.Services
             if (string.IsNullOrEmpty(hash))
                 throw new InvalidOperationException("DropCampaignDetails hash not found — try again");
 
-            Debug.WriteLine($"[GQL] Live DropCampaignDetails hash captured: {hash}");
+            AppLogger.Debug("TwitchGql", $"[GQL] Live DropCampaignDetails hash captured: {hash}");
             return hash!;
         }
 

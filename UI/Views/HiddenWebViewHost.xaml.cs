@@ -140,7 +140,7 @@ namespace UI.Views
                             JsonElement bodyJson = JsonDocument.Parse(bodyResult).RootElement;
                             string body = bodyJson.GetProperty("body").GetString() ?? "";
 
-                            Debug.WriteLine($"Body captured for ViewerDropsDashboard response: {body}\n\nlength={body.Length}");
+                            AppLogger.Debug("WebViewCapture", $"Body captured for ViewerDropsDashboard response: {body}\n\nlength={body.Length}");
 
                             if (body.Contains("ViewerDropsDashboard") || body.Contains("rewardCampaignsAvailableToUser"))
                             {
@@ -220,7 +220,7 @@ namespace UI.Views
                             JsonElement bodyJson = JsonDocument.Parse(bodyResult).RootElement;
                             string body = bodyJson.GetProperty("body").GetString() ?? "";
 
-                            Debug.WriteLine($"Body captured for dropCampaignsInProgress response: {body}\n\nlength={body.Length}");
+                            AppLogger.Debug("WebViewCapture", $"Body captured for dropCampaignsInProgress response: {body}\n\nlength={body.Length}");
 
                             if (body.Contains("dropCampaignsInProgress") || body.Contains("dropCampaignsInProgress"))
                             {
@@ -305,14 +305,14 @@ namespace UI.Views
 
                             if (body.Contains("claimed") || body.Contains("progress_units") || body.Contains("rewards"))
                             {
-                                Debug.WriteLine($"[Kick Progress] SUCCESS - REAL RESPONSE CAPTURED ({body.Length} chars)");
+                                AppLogger.Debug("WebViewCapture", $"[Kick Progress] SUCCESS - REAL RESPONSE CAPTURED ({body.Length} chars)");
                                 responseReceived.DevToolsProtocolEventReceived -= Handler;
                                 tcs.TrySetResult(body);
                             }
                         }
                         catch (Exception ex)
                         {
-                            Debug.WriteLine($"[Kick Progress] getResponseBody failed: {ex.Message}");
+                            AppLogger.Warn("WebViewCapture", $"[Kick Progress] getResponseBody failed: {ex.Message}");
                         }
                     });
                 }
@@ -398,7 +398,10 @@ namespace UI.Views
                         }
                     }
                 }
-                catch { /* firehose - ignore */ }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("WebViewCapture", $"CaptureRequestHeaderAsync handler failed: {ex.Message}");
+                }
             }
 
             eventReceiver.DevToolsProtocolEventReceived += Handler;
@@ -477,9 +480,9 @@ namespace UI.Views
                                 tcs.TrySetResult(postData);
                             }
                         }
-                        catch
+                        catch (Exception ex)
                         {
-                            // Swallow – avoid crashing browser process
+                            AppLogger.Warn("WebViewCapture", $"CaptureGqlRequestBodyContainingAsync loading handler failed: {ex.Message}");
                         }
                     });
                 }
@@ -562,16 +565,17 @@ namespace UI.Views
                 catch (TimeoutException ex)
                 {
                     lastException = ex;
-                    Debug.WriteLine($"[GQL Capture] Attempt {attempt}/{maxRetries} timed out for '{triggerText}'");
+                    AppLogger.Warn("WebViewCapture", $"[GQL Capture] Attempt {attempt}/{maxRetries} timed out for '{triggerText}'");
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
                 {
+                    AppLogger.Info("WebViewCapture", $"[GQL Capture] Capture canceled for '{triggerText}'. {ex.Message}");
                     throw; // User cancel — don't retry
                 }
                 catch (Exception ex)
                 {
                     lastException = ex;
-                    Debug.WriteLine($"[GQL Capture] Attempt {attempt}/{maxRetries} failed: {ex.Message}");
+                    AppLogger.Warn("WebViewCapture", $"[GQL Capture] Attempt {attempt}/{maxRetries} failed: {ex.Message}");
                 }
 
                 if (attempt < maxRetries)
@@ -596,7 +600,7 @@ namespace UI.Views
             string? encodedToken = await GetCookieValueAsync("https://kick.com", "session_token");
             if (string.IsNullOrEmpty(encodedToken))
             {
-                Debug.WriteLine("[Kick] session_token cookie not found");
+                AppLogger.Warn("KickClaim", "session_token cookie not found");
                 return false;
             }
 
@@ -660,7 +664,7 @@ namespace UI.Views
 
                 if (rawResult == "{}" || string.IsNullOrWhiteSpace(rawResult))
                 {
-                    Debug.WriteLine("[Kick] Claim timed out or no response");
+                    AppLogger.Warn("KickClaim", "Claim timed out or no response");
                     return false;
                 }
 
@@ -669,21 +673,21 @@ namespace UI.Views
 
                 if (success)
                 {
-                    Debug.WriteLine($"[DropsInventoryManager] Successfully claimed Kick drop: {rewardId} (Campaign: {campaignId})");
+                    AppLogger.Debug("KickClaim", $"Successfully claimed Kick drop: {rewardId} (Campaign: {campaignId})");
                 }
                 else
                 {
                     string? error = doc.RootElement.TryGetProperty("error", out JsonElement errElem)
                         ? errElem.GetString()
                         : "Unknown error";
-                    Debug.WriteLine($"[DropsInventoryManager] Kick claim failed: {error}");
+                    AppLogger.Warn("KickClaim", $"Kick claim failed: {error}");
                 }
 
                 return success;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DropsInventoryManager] Exception in ClaimKickDropAsync: {ex.Message}");
+                AppLogger.Error("KickClaim", "Exception in ClaimKickDropAsync.", ex);
                 return false;
             }
             finally

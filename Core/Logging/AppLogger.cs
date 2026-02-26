@@ -34,6 +34,8 @@ namespace Core.Logging
 
         public static void Info(string scope, string message) => Write("INFO", scope, message);
 
+        public static void Debug(string scope, string message) => Write("DEBUG", scope, message);
+
         public static void Warn(string scope, string message) => Write("WARN", scope, message);
 
         public static void Error(string scope, string message, Exception? ex = null)
@@ -64,11 +66,11 @@ namespace Core.Logging
                     File.AppendAllText(_logFilePath!, line + Environment.NewLine, Encoding.UTF8);
                 }
 
-                Debug.WriteLine(line);
+                Trace.WriteLine(line);
             }
-            catch
+            catch (Exception ex)
             {
-                // Never throw from logger.
+                Trace.WriteLine($"[AppLogger-Fallback] {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
