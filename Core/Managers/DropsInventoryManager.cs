@@ -5,6 +5,8 @@ using System.Timers;
 using Core.Logging;
 using Core.Models;
 using Core.Enums;
+using System.Text.Json;
+using System.IO;
 
 namespace Core.Managers
 {
@@ -43,6 +45,14 @@ namespace Core.Managers
         private readonly SemaphoreSlim _startWatchingLock = new(1, 1);
         private CancellationTokenSource? _startWatchingCts;
         private bool _isPaused;
+        private readonly object _lastStreamerSync = new();
+        private readonly Dictionary<string, string> _lastTwitchStreamers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, string> _lastKickStreamers = new(StringComparer.OrdinalIgnoreCase);
+
+        private static readonly string _lastWatchedStreamersFilePath = Path.Combine(
+            Environment.ExpandEnvironmentVariables("%APPDATA%"),
+            "Stream Drop Collector",
+            "LastWatchedStreamers.json");
 
         private static bool IsVerboseDebugEnabled => UISettingsManager.Instance.VerboseDebugLogging;
 
@@ -54,6 +64,8 @@ namespace Core.Managers
 
         private DropsInventoryManager()
         {
+            LoadLastWatchedStreamers();
+
             _liveProgressTimer.Elapsed += OnLiveProgressTick;
             _liveProgressTimer.AutoReset = true;
 
@@ -350,31 +362,15 @@ namespace Core.Managers
 
                         if (claimResult)
                         {
-                            // Update ActiveCampaigns: mark reward as claimed and remove campaign if all rewards are claimed
-                            Application.Current.Dispatcher.Invoke(() =>
+                            bool inventoryUpdated = MarkRewardClaimedInActiveCampaigns(parentCampaign.Id, item.Id);
+                            if (!inventoryUpdated)
                             {
-                                // Create updated rewards list with the claimed reward
-                                List<DropsReward> updatedRewards = new List<DropsReward>();
-                                foreach (DropsReward reward in parentCampaign.Rewards)
-                                {
-                                    if (reward.Id == item.Id)
-                                        updatedRewards.Add(reward with { IsClaimed = true });
-                                    else
-                                        updatedRewards.Add(reward);
-                                }
-
-                                // Check if EVERY reward in the campaign is now claimed
-                                bool allRewardsClaimed = updatedRewards.All(r => r.IsClaimed);
-
-                                // Update the campaign with the new rewards list
-                                DropsCampaign updatedCampaign = parentCampaign with { Rewards = updatedRewards };
-
-                                int index = ActiveCampaigns.IndexOf(parentCampaign);
-                                if (index >= 0)
-                                {
-                                    ActiveCampaigns[index] = updatedCampaign;
-                                }
-                            });
+                                AppLogger.Warn("Miner", $"Failed to apply immediate claimed-state update. campaignId={parentCampaign.Id}, rewardId={item.Id}");
+                            }
+                            else
+                            {
+                                AppLogger.Info("Miner", $"Applied immediate claimed-state update. campaignId={parentCampaign.Id}, rewardId={item.Id}");
+                            }
 
                             if (UISettingsManager.Instance.NotifyOnAutoClaimed)
                                 NotificationManager.ShowNotification("Drop Claimed", $"Successfully claimed drop reward: {item.Name}");
@@ -491,6 +487,7 @@ namespace Core.Managers
 
                         AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Watching Twitch stream: {twitchUrl}");
                         AppLogger.Info("TwitchSelection", $"Selected Twitch stream '{twitchUrl}' for campaign '{bestTwitch.Name}' ({bestTwitch.Id}).");
+                        RememberLastStreamerUrl(Platform.Twitch, bestTwitch.Slug, twitchUrl);
 
                         DropsReward? soonestTwitch = bestTwitch.Rewards
                             .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
@@ -590,6 +587,7 @@ namespace Core.Managers
 
                         AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Watching Kick stream: {kickUrl}");
                         AppLogger.Info("KickSelection", $"Selected Kick stream '{kickUrl}' for campaign '{bestKick.Name}' ({bestKick.Id}).");
+                        RememberLastStreamerUrl(Platform.Kick, bestKick.Slug, kickUrl);
 
                         DropsReward? soonestKick = bestKick.Rewards
                             .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
@@ -645,6 +643,58 @@ namespace Core.Managers
             {
                 _startWatchingLock.Release();
             }
+        }
+
+        private bool MarkRewardClaimedInActiveCampaigns(string campaignId, string rewardId)
+        {
+            bool updated = false;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                DropsCampaign? existingCampaign = ActiveCampaigns.FirstOrDefault(c => c.Id == campaignId);
+                if (existingCampaign == null)
+                    return;
+
+                int campaignIndex = ActiveCampaigns.IndexOf(existingCampaign);
+                if (campaignIndex < 0)
+                    return;
+
+                bool rewardFound = false;
+                List<DropsReward> updatedRewards = new List<DropsReward>(existingCampaign.Rewards.Count);
+                foreach (DropsReward reward in existingCampaign.Rewards)
+                {
+                    if (reward.Id == rewardId)
+                    {
+                        rewardFound = true;
+                        updatedRewards.Add(reward with
+                        {
+                            IsClaimed = true,
+                            ProgressMinutes = Math.Max(reward.ProgressMinutes, reward.RequiredMinutes)
+                        });
+                    }
+                    else
+                    {
+                        updatedRewards.Add(reward);
+                    }
+                }
+
+                if (!rewardFound)
+                    return;
+
+                DropsCampaign updatedCampaign = existingCampaign with { Rewards = updatedRewards };
+                ActiveCampaigns[campaignIndex] = updatedCampaign;
+
+                if (_currentTwitchCampaign?.Id == campaignId)
+                    _currentTwitchCampaign = updatedCampaign;
+
+                if (_currentKickCampaign?.Id == campaignId)
+                    _currentKickCampaign = updatedCampaign;
+
+                UpdateCurrentSelectionFlags();
+                updated = true;
+            });
+
+            return updated;
         }
         /// <summary>
         /// Updates the selection flags for active campaigns and their rewards to reflect the current campaign and
@@ -1031,6 +1081,12 @@ namespace Core.Managers
         {
             string streamerUrl = string.Empty;
 
+            if (TryGetLastStreamerUrl(Platform.Kick, campaign.Slug, out string? rememberedKickUrl))
+            {
+                AppLogger.Info("KickSelection", $"Trying remembered Kick streamer for campaign '{campaign.Name}': {rememberedKickUrl}");
+                return rememberedKickUrl!;
+            }
+
             string getStreamerCategoryJs = @"
                 (() => {
                     const categoryElement = document.querySelector("".text-primary-base"");
@@ -1102,6 +1158,7 @@ namespace Core.Managers
         private async Task<string> SelectTwitchStreamerForCampaign(DropsCampaign campaign)
         {
             string streamerUrl = string.Empty;
+            TryGetLastStreamerUrl(Platform.Twitch, campaign.Slug, out string? rememberedTwitchUrl);
 
             string getStreamerCategoryHrefJs = @"
                 (() => {
@@ -1124,7 +1181,15 @@ namespace Core.Managers
 
             if (!campaign.IsGeneralDrop)
             {
-                foreach (string connectUrl in campaign.ConnectUrls)
+                IEnumerable<string> orderedConnectUrls = campaign.ConnectUrls;
+                if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl))
+                {
+                    orderedConnectUrls = new[] { rememberedTwitchUrl! }
+                        .Concat(campaign.ConnectUrls)
+                        .Distinct(StringComparer.OrdinalIgnoreCase);
+                }
+
+                foreach (string connectUrl in orderedConnectUrls)
                 {
                     await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(connectUrl));
                     await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.WaitForNetworkIdleAsync(5000, 500));
@@ -1134,6 +1199,13 @@ namespace Core.Managers
                     if (TwitchCategoryHrefMatchesCampaign(categoryHrefResult, campaign.Slug))
                     {
                         streamerUrl = connectUrl;
+
+                        if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl) &&
+                            string.Equals(connectUrl, rememberedTwitchUrl, StringComparison.OrdinalIgnoreCase))
+                        {
+                            AppLogger.Info("TwitchSelection", $"Remembered Twitch streamer accepted for campaign '{campaign.Name}': {connectUrl}");
+                        }
+
                         break;
                     }
 
@@ -1142,6 +1214,19 @@ namespace Core.Managers
             }
             else
             {
+                if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl))
+                {
+                    AppLogger.Info("TwitchSelection", $"Trying remembered Twitch streamer for general campaign '{campaign.Name}': {rememberedTwitchUrl}");
+                    streamerUrl = rememberedTwitchUrl!;
+                }
+
+                if (!string.IsNullOrWhiteSpace(streamerUrl))
+                {
+                    AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for campaign '{campaign.Name}': {streamerUrl}");
+                    TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
+                    return streamerUrl;
+                }
+
                 await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(campaign.ConnectUrls[0]));
                 await Task.Delay(1500);
 
@@ -1174,6 +1259,117 @@ namespace Core.Managers
             string hrefs = rawCategoryHrefs.Trim().Trim('"');
             return hrefs.Contains(expectedCategoryPath, StringComparison.OrdinalIgnoreCase);
         }
+
+        private bool TryGetLastStreamerUrl(Platform platform, string? campaignSlug, out string? url)
+        {
+            url = null;
+            if (string.IsNullOrWhiteSpace(campaignSlug))
+                return false;
+
+            lock (_lastStreamerSync)
+            {
+                Dictionary<string, string> source = platform == Platform.Twitch ? _lastTwitchStreamers : _lastKickStreamers;
+                if (!source.TryGetValue(campaignSlug, out string? remembered) || string.IsNullOrWhiteSpace(remembered))
+                    return false;
+
+                url = remembered;
+                return true;
+            }
+        }
+
+        private void RememberLastStreamerUrl(Platform platform, string? campaignSlug, string? streamerUrl)
+        {
+            if (string.IsNullOrWhiteSpace(campaignSlug) || string.IsNullOrWhiteSpace(streamerUrl))
+                return;
+
+            bool changed = false;
+
+            lock (_lastStreamerSync)
+            {
+                Dictionary<string, string> target = platform == Platform.Twitch ? _lastTwitchStreamers : _lastKickStreamers;
+                if (!target.TryGetValue(campaignSlug, out string? existing) || !string.Equals(existing, streamerUrl, StringComparison.OrdinalIgnoreCase))
+                {
+                    target[campaignSlug] = streamerUrl;
+                    changed = true;
+                }
+            }
+
+            if (changed)
+                SaveLastWatchedStreamers();
+        }
+
+        private void LoadLastWatchedStreamers()
+        {
+            try
+            {
+                if (!File.Exists(_lastWatchedStreamersFilePath))
+                    return;
+
+                string json = File.ReadAllText(_lastWatchedStreamersFilePath);
+                LastWatchedStreamersState? state = JsonSerializer.Deserialize<LastWatchedStreamersState>(json);
+                if (state == null)
+                    return;
+
+                lock (_lastStreamerSync)
+                {
+                    _lastTwitchStreamers.Clear();
+                    _lastKickStreamers.Clear();
+
+                    foreach ((string key, string value) in state.TwitchBySlug)
+                    {
+                        if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+                            _lastTwitchStreamers[key] = value;
+                    }
+
+                    foreach ((string key, string value) in state.KickBySlug)
+                    {
+                        if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+                            _lastKickStreamers[key] = value;
+                    }
+                }
+
+                AppLogger.Info("StreamSelection", $"Loaded remembered streamers. twitch={_lastTwitchStreamers.Count}, kick={_lastKickStreamers.Count}");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("StreamSelection", $"Failed loading remembered streamers. {ex.Message}");
+            }
+        }
+
+        private void SaveLastWatchedStreamers()
+        {
+            try
+            {
+                LastWatchedStreamersState snapshot;
+
+                lock (_lastStreamerSync)
+                {
+                    snapshot = new LastWatchedStreamersState
+                    {
+                        TwitchBySlug = _lastTwitchStreamers.ToDictionary(k => k.Key, v => v.Value, StringComparer.OrdinalIgnoreCase),
+                        KickBySlug = _lastKickStreamers.ToDictionary(k => k.Key, v => v.Value, StringComparer.OrdinalIgnoreCase)
+                    };
+                }
+
+                string? directory = Path.GetDirectoryName(_lastWatchedStreamersFilePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                string json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_lastWatchedStreamersFilePath, json);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("StreamSelection", $"Failed saving remembered streamers. {ex.Message}");
+            }
+        }
+
+        private sealed class LastWatchedStreamersState
+        {
+            public Dictionary<string, string> TwitchBySlug { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string> KickBySlug { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// Extracts the streamer name from the specified Twitch or Kick channel URL.
         /// </summary>

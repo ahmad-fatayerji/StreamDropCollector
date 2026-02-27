@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.IO;
+using Core.Managers;
 
 namespace Core.Logging
 {
@@ -34,7 +35,13 @@ namespace Core.Logging
 
         public static void Info(string scope, string message) => Write("INFO", scope, message);
 
-        public static void Debug(string scope, string message) => Write("DEBUG", scope, message);
+        public static void Debug(string scope, string message)
+        {
+            if (!IsVerboseDebugEnabled())
+                return;
+
+            Write("DEBUG", scope, message);
+        }
 
         public static void Warn(string scope, string message) => Write("WARN", scope, message);
 
@@ -71,6 +78,18 @@ namespace Core.Logging
             catch (Exception ex)
             {
                 Trace.WriteLine($"[AppLogger-Fallback] {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static bool IsVerboseDebugEnabled()
+        {
+            try
+            {
+                return UISettingsManager.Instance.VerboseDebugLogging;
+            }
+            catch
+            {
+                return false;
             }
         }
     }
