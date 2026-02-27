@@ -3,7 +3,6 @@ using System.Runtime.CompilerServices;
 using System.Collections.ObjectModel;
 using System.Windows.Threading;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.Windows;
 using Core.Logging;
 using Core.Managers;
@@ -370,17 +369,16 @@ namespace UI.Views
                 MinerStatus = "Idle";
                 MinerStatusDetails = $"{_activeCampaigns.Count} active campaigns loaded";
             }
-            catch (OperationCanceledException) when (_currentLoadCts?.IsCancellationRequested == true)
+            catch (OperationCanceledException ex) when (_currentLoadCts?.IsCancellationRequested == true)
             {
                 // Expected when a new load cancels the old one
-                AppLogger.Info("Dashboard", "LoadDropsAsync canceled due to superseding refresh request.");
+                AppLogger.Info("Dashboard", $"LoadDropsAsync canceled due to superseding refresh request. {ex.Message}");
                 return;
             }
             catch (Exception ex)
             {
                 MinerStatus = "Failed to load campaigns";
                 MinerStatusDetails = ex.Message;
-                Debug.WriteLine($"[Drops] Load failed: {ex}");
                 AppLogger.Error("Dashboard", "LoadDropsAsync failed.", ex);
             }
             finally

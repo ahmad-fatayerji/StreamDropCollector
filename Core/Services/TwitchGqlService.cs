@@ -1,11 +1,13 @@
 ﻿using System.Text.Json.Nodes;
 using System.Net.Http.Json;
-using System.Diagnostics;
 using System.Text.Json;
 using System.Net.Http;
 using Core.Interfaces;
 using Core.Logging;
+using Core.Managers;
 using System.Net;
+using System.Text;
+using System.IO;
 
 namespace Core.Services
 {
@@ -19,6 +21,13 @@ namespace Core.Services
         private string? _deviceId;
         private string? _accessToken;
         private string? _userId;
+        private readonly object _hashCacheSync = new();
+        private readonly Dictionary<string, GqlHashCacheEntry> _gqlHashCache = new(StringComparer.OrdinalIgnoreCase);
+
+        private static readonly string _gqlHashCacheFilePath = Path.Combine(
+            Environment.ExpandEnvironmentVariables("%APPDATA%"),
+            "Stream Drop Collector",
+            "GqlHashCache.json");
 
         public string UserId
         {
@@ -39,6 +48,8 @@ namespace Core.Services
             _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0.0.0 Safari/537.36"
             );
+
+            LoadHashCacheFromDisk();
         }
         /// <summary>
         /// Asynchronously refreshes the required HTTP headers by navigating to the Twitch campaigns page and capturing
@@ -58,7 +69,7 @@ namespace Core.Services
             {
                 try
                 {
-                    Debug.WriteLine($"[RefreshHeaders] Attempt {attempt}/{maxAttempts} – Navigating to drops/campaigns");
+                    AppLogger.Debug("TwitchGql", $"[RefreshHeaders] Attempt {attempt}/{maxAttempts} – Navigating to drops/campaigns");
 
                     // Fresh navigation every attempt (important for clean integrity token)
                     await _host.NavigateAsync($"https://www.twitch.tv/drops/campaigns?t={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
@@ -93,12 +104,12 @@ namespace Core.Services
                     _deviceId = deviceId ?? _deviceId; // Device-ID is optional – keep old if missing
                     _accessToken = accessToken;
 
-                    Debug.WriteLine($"[RefreshHeaders] Success on attempt {attempt} – Got fresh headers");
+                    AppLogger.Debug("TwitchGql", $"[RefreshHeaders] Success on attempt {attempt} – Got fresh headers");
                     return;
                 }
                 catch (Exception ex) when (attempt < maxAttempts)
                 {
-                    Debug.WriteLine($"[RefreshHeaders] Attempt {attempt} failed: {ex.Message}. Retrying in {baseDelayMs * attempt}ms...");
+                    AppLogger.Warn("TwitchGql", $"[RefreshHeaders] Attempt {attempt} failed: {ex.Message}. Retrying in {baseDelayMs * attempt}ms...");
 
                     // Exponential backoff: 5s -> 10s -> 15s
                     await Task.Delay(baseDelayMs * attempt, ct);
@@ -130,38 +141,56 @@ namespace Core.Services
         /// <returns>A task that represents the asynchronous operation. The task result contains the SHA-256 hash of the
         /// persisted query associated with the specified operation name.</returns>
         /// <exception cref="InvalidOperationException">Thrown if a persisted query hash cannot be found for the specified operation name.</exception>
-        private async Task<string> GetPersistedQueryHashAsync(string operationName, CancellationToken ct = default, string? urlOverride = null)
+        private async Task<string> GetPersistedQueryHashAsync(string operationName, CancellationToken ct = default, string? urlOverride = null, bool allowCached = true)
         {
-            if (!string.IsNullOrEmpty(urlOverride))
-                await _host.NavigateAsync($"{urlOverride}?t={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
-            else
-                await _host.NavigateAsync($"https://www.twitch.tv/drops/campaigns?t={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
-
-            string payload = await _host.CaptureGqlRequestBodyContainingAsyncWithRetry(operationName, 5000, 10, ct: ct);
-
-            using JsonDocument document = JsonDocument.Parse(payload);
-            JsonElement root = document.RootElement;
-
-            IEnumerable<JsonElement> operations = root.ValueKind == JsonValueKind.Array
-                ? root.EnumerateArray()
-                : Enumerable.Repeat(root, 1);
-
-            foreach (JsonElement operation in operations)
+            if (allowCached && TryGetCachedHash(operationName, requireFresh: true, out string? cachedHash))
             {
-                if (!operation.TryGetProperty("operationName", out JsonElement opNameElement) ||
-                    opNameElement.GetString() != operationName)
-                    continue;
-
-                if (operation.TryGetProperty("extensions", out JsonElement extensions) &&
-                    extensions.TryGetProperty("persistedQuery", out JsonElement persistedQuery) &&
-                    persistedQuery.TryGetProperty("sha256Hash", out JsonElement hashElement))
-                {
-                    return hashElement.GetString()!;
-                }
+                LogCacheDebug($"Using cached hash for '{operationName}'.");
+                return cachedHash!;
             }
 
-            throw new InvalidOperationException($"Persisted query hash not found for operation: {operationName}");
+            try
+            {
+                if (!string.IsNullOrEmpty(urlOverride))
+                    await _host.NavigateAsync($"{urlOverride}?t={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
+                else
+                    await _host.NavigateAsync($"https://www.twitch.tv/drops/campaigns?t={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
+
+                string payload = await _host.CaptureGqlRequestBodyContainingAsyncWithRetry(operationName, 5000, 10, ct: ct);
+
+                using JsonDocument document = JsonDocument.Parse(payload);
+                JsonElement root = document.RootElement;
+
+                IEnumerable<JsonElement> operations = root.ValueKind == JsonValueKind.Array
+                    ? root.EnumerateArray()
+                    : Enumerable.Repeat(root, 1);
+
+                foreach (JsonElement operation in operations)
+                {
+                    if (!operation.TryGetProperty("operationName", out JsonElement opNameElement) ||
+                        opNameElement.GetString() != operationName)
+                        continue;
+
+                    if (operation.TryGetProperty("extensions", out JsonElement extensions) &&
+                        extensions.TryGetProperty("persistedQuery", out JsonElement persistedQuery) &&
+                        persistedQuery.TryGetProperty("sha256Hash", out JsonElement hashElement))
+                    {
+                        string hash = hashElement.GetString()!;
+                        SetCachedHash(operationName, hash);
+                        return hash;
+                    }
+                }
+
+                throw new InvalidOperationException($"Persisted query hash not found for operation: {operationName}");
+            }
+            catch (Exception ex) when (allowCached && TryGetCachedHash(operationName, requireFresh: false, out string? fallbackHash))
+            {
+                LogCacheWarn($"Live hash capture failed for '{operationName}'. Using cached fallback. {ex.Message}");
+                return fallbackHash!;
+            }
         }
+
+
         /// <summary>
         /// Attempts to claim a Twitch drop reward for the specified campaign and reward identifiers asynchronously.
         /// </summary>
@@ -182,6 +211,7 @@ namespace Core.Services
             string operationName = "DropsPage_ClaimDropRewards";
             string dropInstanceID = $"{_userId}#{campaignId}#{rewardId}";
             string hash = "a455deea71bdc9015b78eb49f4acfbce8baa7ccbedd28e549bb025bd0f751930";
+            SetCachedHash(operationName, hash);
 
             JsonArray payload = new JsonArray
             {
@@ -259,35 +289,7 @@ namespace Core.Services
             string dashboardHash = await GetPersistedQueryHashAsync("ViewerDropsDashboard", ct);
             string inventoryHash = await GetPersistedQueryHashAsync("Inventory", ct, "https://www.twitch.tv/drops/inventory");
 
-            JsonArray payload = new JsonArray
-            {
-                new JsonObject
-                {
-                    ["operationName"] = "Inventory",
-                    ["variables"] = new JsonObject { ["fetchRewardCampaigns"] = true },
-                    ["extensions"] = new JsonObject
-                    {
-                        ["persistedQuery"] = new JsonObject
-                        {
-                            ["version"] = 1,
-                            ["sha256Hash"] = inventoryHash
-                        }
-                    }
-                },
-                new JsonObject
-                {
-                    ["operationName"] = "ViewerDropsDashboard",
-                    ["variables"] = new JsonObject { ["fetchRewardCampaigns"] = true },
-                    ["extensions"] = new JsonObject
-                    {
-                        ["persistedQuery"] = new JsonObject
-                        {
-                            ["version"] = 1,
-                            ["sha256Hash"] = dashboardHash
-                        }
-                    }
-                }
-            };
+            JsonArray payload = BuildDashboardPayload(inventoryHash, dashboardHash);
 
             using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
             {
@@ -308,6 +310,10 @@ namespace Core.Services
             {
                 AppLogger.Warn("TwitchGql", $"QueryFullDropsDashboard initial call failed. status={(int)response.StatusCode}, hasErrors={jsonText.Contains("\"errors\"")}. Refreshing headers and retrying.");
                 await RefreshHeadersAsync(ct);
+
+                dashboardHash = await GetPersistedQueryHashAsync("ViewerDropsDashboard", ct, allowCached: false);
+                inventoryHash = await GetPersistedQueryHashAsync("Inventory", ct, "https://www.twitch.tv/drops/inventory", allowCached: false);
+                payload = BuildDashboardPayload(inventoryHash, dashboardHash);
 
                 using HttpRequestMessage newRequest = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
                 {
@@ -355,7 +361,7 @@ namespace Core.Services
                 await RefreshHeadersAsync(ct);
 
             // 1. Get the REAL current hash
-            string liveHash = await GetCurrentDropCampaignDetailsHashAsync(ct);
+            string liveHash = await GetCurrentDropCampaignDetailsHashInternalAsync(allowCached: true, ct);
 
             Dictionary<string, JsonObject> results = new Dictionary<string, JsonObject>();
             const int batchSize = 20;
@@ -364,28 +370,7 @@ namespace Core.Services
             {
                 List<(string dropID, string channelLogin)> batch = requests.Skip(i).Take(batchSize).ToList();
 
-                JsonArray payload = new();
-
-                foreach ((string? dropID, string? channelLogin) in batch)
-                {
-                    payload.Add(new JsonObject
-                    {
-                        ["operationName"] = "DropCampaignDetails",
-                        ["variables"] = new JsonObject
-                        {
-                            ["dropID"] = dropID,
-                            ["channelLogin"] = channelLogin
-                        },
-                        ["extensions"] = new JsonObject
-                        {
-                            ["persistedQuery"] = new JsonObject
-                            {
-                                ["version"] = 1,
-                                ["sha256Hash"] = liveHash
-                            }
-                        }
-                    });
-                }
+                JsonArray payload = BuildDropCampaignDetailsPayload(batch, liveHash);
 
                 using HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
                 {
@@ -402,7 +387,7 @@ namespace Core.Services
                 string jsonText = await response.Content.ReadAsStringAsync(ct);
 
                 // print the payload as json text for debugging
-                Debug.WriteLine(request.Content != null
+                AppLogger.Debug("TwitchGql", request.Content != null
                     ? await request.Content.ReadAsStringAsync(ct)
                     : "No request content");
 
@@ -411,9 +396,22 @@ namespace Core.Services
                 {
                     AppLogger.Warn("TwitchGql", $"DropCampaignDetails batch call failed. batchStart={i}, status={(int)response.StatusCode}, hasErrors={jsonText.Contains("\"errors\"")}. Refreshing headers and retrying.");
                     await RefreshHeadersAsync(ct);
-                    request.Headers.Remove("Client-Integrity");
-                    request.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
-                    response = await _httpClient.SendAsync(request, ct);
+
+                    liveHash = await GetCurrentDropCampaignDetailsHashInternalAsync(allowCached: false, ct);
+                    payload = BuildDropCampaignDetailsPayload(batch, liveHash);
+
+                    using HttpRequestMessage retryRequest = new HttpRequestMessage(HttpMethod.Post, "https://gql.twitch.tv/gql")
+                    {
+                        Content = JsonContent.Create(payload)
+                    };
+
+                    retryRequest.Headers.TryAddWithoutValidation("Client-ID", _clientId);
+                    retryRequest.Headers.TryAddWithoutValidation("Client-Integrity", _integrityToken);
+                    retryRequest.Headers.TryAddWithoutValidation("Authorization", _accessToken);
+                    if (!string.IsNullOrEmpty(_deviceId))
+                        retryRequest.Headers.TryAddWithoutValidation("X-Device-Id", _deviceId);
+
+                    response = await _httpClient.SendAsync(retryRequest, ct);
                     jsonText = await response.Content.ReadAsStringAsync(ct);
                 }
 
@@ -429,7 +427,7 @@ namespace Core.Services
                 }
             }
 
-            Debug.WriteLine($"[GQL] Fetched {results.Count} campaigns with full details");
+            AppLogger.Debug("TwitchGql", $"[GQL] Fetched {results.Count} campaigns with full details");
             AppLogger.Info("TwitchGql", $"DropCampaignDetails fetch completed. totalResults={results.Count}");
             return results;
         }
@@ -445,6 +443,19 @@ namespace Core.Services
         /// <exception cref="InvalidOperationException">Thrown if the DropCampaignDetails hash cannot be found on the page.</exception>
         public async Task<string> GetCurrentDropCampaignDetailsHashAsync(CancellationToken ct = default)
         {
+            return await GetCurrentDropCampaignDetailsHashInternalAsync(allowCached: true, ct);
+        }
+
+        private async Task<string> GetCurrentDropCampaignDetailsHashInternalAsync(bool allowCached, CancellationToken ct = default)
+        {
+            const string operationName = "DropCampaignDetails";
+
+            if (allowCached && TryGetCachedHash(operationName, requireFresh: true, out string? cachedHash))
+            {
+                LogCacheDebug("Using cached hash for 'DropCampaignDetails'.");
+                return cachedHash!;
+            }
+
             // 1. Go to drops page
             await _host.NavigateAsync($"https://www.twitch.tv/drops/campaigns?t={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
 
@@ -453,28 +464,24 @@ namespace Core.Services
                     // Wait a bit more for React to render
                     await new Promise(r => setTimeout(r, 3000));
 
-                    // Find all campaign containers
-                    const parentContainer = document.querySelector("".Layout-sc-1xcs6mc-0.gJZZlL.drops-root__content"")
-                    const containers = parentContainer.children[4].querySelectorAll('.Layout-sc-1xcs6mc-0.iSIERH');
-            
-                    if (containers.length === 0) {
-                        console.log('No campaign container not found');
-                        return;
-                    }
+                    document.querySelectorAll(
+                      '[role=""heading""][aria-level=""3""] button'
+                    ).forEach(ind => ind.closest('button')?.click());
 
-                    // Find the first <button> inside the first container and click it
-                    const firstButton = containers[0].querySelector('button');
-                    if (firstButton) {
-                        console.log('Clicking first campaign button');
-                        firstButton.click();
-                    } else {
-                        console.log('No button found in first container');
-                    }
                 })();
             ";
 
             // 3. Capture the real payload
-            string payloadJson = await _host.CaptureGqlRequestBodyContainingAsyncWithRetry("DropCampaignDetails", 5000, 10, clickScript, ct);
+            string payloadJson;
+            try
+            {
+                payloadJson = await _host.CaptureGqlRequestBodyContainingAsyncWithRetry("DropCampaignDetails", 8000, 10, clickScript, ct);
+            }
+            catch (Exception ex) when (allowCached && TryGetCachedHash(operationName, requireFresh: false, out string? fallbackHash))
+            {
+                LogCacheWarn($"DropCampaignDetails capture failed; using cached fallback. {ex.Message}");
+                return fallbackHash!;
+            }
 
             // 4. Parse just the hash
             JsonArray payload = JsonNode.Parse(payloadJson)!.AsArray();
@@ -488,8 +495,195 @@ namespace Core.Services
             if (string.IsNullOrEmpty(hash))
                 throw new InvalidOperationException("DropCampaignDetails hash not found — try again");
 
-            Debug.WriteLine($"[GQL] Live DropCampaignDetails hash captured: {hash}");
+            SetCachedHash(operationName, hash);
+
+            AppLogger.Debug("TwitchGql", $"[GQL] Live DropCampaignDetails hash captured: {hash}");
             return hash!;
+        }
+
+        private static JsonArray BuildDashboardPayload(string inventoryHash, string dashboardHash)
+        {
+            return new JsonArray
+            {
+                new JsonObject
+                {
+                    ["operationName"] = "Inventory",
+                    ["variables"] = new JsonObject { ["fetchRewardCampaigns"] = true },
+                    ["extensions"] = new JsonObject
+                    {
+                        ["persistedQuery"] = new JsonObject
+                        {
+                            ["version"] = 1,
+                            ["sha256Hash"] = inventoryHash
+                        }
+                    }
+                },
+                new JsonObject
+                {
+                    ["operationName"] = "ViewerDropsDashboard",
+                    ["variables"] = new JsonObject { ["fetchRewardCampaigns"] = true },
+                    ["extensions"] = new JsonObject
+                    {
+                        ["persistedQuery"] = new JsonObject
+                        {
+                            ["version"] = 1,
+                            ["sha256Hash"] = dashboardHash
+                        }
+                    }
+                }
+            };
+        }
+
+        private static JsonArray BuildDropCampaignDetailsPayload(IReadOnlyList<(string dropID, string channelLogin)> batch, string hash)
+        {
+            JsonArray payload = new();
+
+            foreach ((string dropID, string channelLogin) in batch)
+            {
+                payload.Add(new JsonObject
+                {
+                    ["operationName"] = "DropCampaignDetails",
+                    ["variables"] = new JsonObject
+                    {
+                        ["dropID"] = dropID,
+                        ["channelLogin"] = channelLogin
+                    },
+                    ["extensions"] = new JsonObject
+                    {
+                        ["persistedQuery"] = new JsonObject
+                        {
+                            ["version"] = 1,
+                            ["sha256Hash"] = hash
+                        }
+                    }
+                });
+            }
+
+            return payload;
+        }
+
+        private bool TryGetCachedHash(string operationName, bool requireFresh, out string? hash)
+        {
+            lock (_hashCacheSync)
+            {
+                if (!_gqlHashCache.TryGetValue(operationName, out GqlHashCacheEntry? entry) || string.IsNullOrWhiteSpace(entry.Hash))
+                {
+                    hash = null;
+                    return false;
+                }
+
+                hash = entry.Hash;
+                return true;
+            }
+        }
+
+        private void SetCachedHash(string operationName, string hash)
+        {
+            if (string.IsNullOrWhiteSpace(operationName) || string.IsNullOrWhiteSpace(hash))
+                return;
+
+            lock (_hashCacheSync)
+            {
+                _gqlHashCache[operationName] = new GqlHashCacheEntry
+                {
+                    Hash = hash,
+                    UpdatedUtc = DateTimeOffset.UtcNow
+                };
+            }
+
+            SaveHashCacheToDisk();
+        }
+
+        private void LoadHashCacheFromDisk()
+        {
+            try
+            {
+                if (!File.Exists(_gqlHashCacheFilePath))
+                    return;
+
+                string json = File.ReadAllText(_gqlHashCacheFilePath, Encoding.UTF8);
+                Dictionary<string, GqlHashCacheEntry>? loaded = JsonSerializer.Deserialize<Dictionary<string, GqlHashCacheEntry>>(json);
+
+                if (loaded == null || loaded.Count == 0)
+                    return;
+
+                lock (_hashCacheSync)
+                {
+                    _gqlHashCache.Clear();
+
+                    foreach ((string key, GqlHashCacheEntry value) in loaded)
+                    {
+                        if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value.Hash))
+                            _gqlHashCache[key] = value;
+                    }
+                }
+
+                LogCacheInfo($"Loaded {_gqlHashCache.Count} cached GQL hash entries.");
+            }
+            catch (Exception ex)
+            {
+                LogCacheWarn($"Failed to load cache file. {ex.Message}");
+            }
+        }
+
+        private void SaveHashCacheToDisk()
+        {
+            try
+            {
+                Dictionary<string, GqlHashCacheEntry> snapshot;
+
+                lock (_hashCacheSync)
+                {
+                    snapshot = _gqlHashCache.ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+                }
+
+                string? directory = Path.GetDirectoryName(_gqlHashCacheFilePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                string json = JsonSerializer.Serialize(snapshot, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(_gqlHashCacheFilePath, json, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                LogCacheWarn($"Failed to save cache file. {ex.Message}");
+            }
+        }
+
+        private static bool IsVerboseCacheLoggingEnabled()
+        {
+            try
+            {
+                return UISettingsManager.Instance.VerboseDebugLogging;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static void LogCacheDebug(string message)
+        {
+            if (IsVerboseCacheLoggingEnabled())
+                AppLogger.Debug("TwitchGql", $"[HashCache] {message}");
+        }
+
+        private static void LogCacheInfo(string message)
+        {
+            if (IsVerboseCacheLoggingEnabled())
+                AppLogger.Info("TwitchGql", $"[HashCache] {message}");
+        }
+
+        private static void LogCacheWarn(string message)
+        {
+            if (IsVerboseCacheLoggingEnabled())
+                AppLogger.Warn("TwitchGql", $"[HashCache] {message}");
+        }
+
+        private sealed class GqlHashCacheEntry
+        {
+            public string Hash { get; set; } = string.Empty;
+            public DateTimeOffset UpdatedUtc { get; set; }
         }
 
         public void Dispose() => _httpClient.Dispose();

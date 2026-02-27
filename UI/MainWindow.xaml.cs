@@ -8,6 +8,7 @@ using System.Windows.Input;
 using System.Diagnostics;
 using System.IO.Pipes;
 using System.Windows;
+using Core.Logging;
 using Core.Managers;
 using System.IO;
 using UI.Views;
@@ -184,7 +185,7 @@ namespace UI
                             }
                             catch (Exception ex)
                             {
-                                Debug.WriteLine($"Failed to delete Update folder: {ex.Message}");
+                                AppLogger.Warn("MainWindow", $"Failed to delete Update folder: {ex.Message}");
                             }
                         });
 

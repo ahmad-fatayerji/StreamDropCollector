@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using Core.Services;
+using Core.Logging;
 using System.IO;
 
 namespace Core.Managers
@@ -44,7 +45,7 @@ namespace Core.Managers
             catch (Exception ex)
             {
                 NotificationManager.ShowNotification("Update Error", $"An error occurred while updating the application.\n{ex.Message}\n\nTry again after this time", 300);
-                Debug.WriteLine(ex.Message);
+                AppLogger.Error("UpdateManager", "DownloadUpdate failed.", ex);
             }
         }
         /// <summary>

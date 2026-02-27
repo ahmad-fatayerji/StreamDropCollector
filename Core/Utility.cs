@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Win32;
 using System.Windows;
 using System.IO;
+using Core.Logging;
 
 namespace Core
 {
@@ -18,8 +19,9 @@ namespace Core
             {
                 Process.Start(url);
             }
-            catch
+            catch (Exception ex)
             {
+                AppLogger.Warn("Utility", $"Process.Start direct launch failed for url '{url}'. Falling back by platform. {ex.Message}");
                 // Hack for running the above line in DOTNET Core...
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
@@ -46,8 +48,8 @@ namespace Core
             try
             {
                 RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run");
-                Debug.WriteLine($"Registry Key Check: {key.GetValue(keyName)}");
-                Debug.WriteLine($"Registry Key Write: \"{keyValue}\" {string.Join(" ", arguments ?? [])}");
+                AppLogger.Debug("Utility", $"Registry Key Check: {key.GetValue(keyName)}");
+                AppLogger.Debug("Utility", $"Registry Key Write: \"{keyValue}\" {string.Join(" ", arguments ?? [])}");
 
                 if (arguments != null)
                     key.SetValue(keyName, $"\"{keyValue}\" {string.Join(" ", arguments)}");
@@ -58,6 +60,7 @@ namespace Core
             }
             catch (Exception ex)
             {
+                AppLogger.Error("Utility", $"Failed to write startup registry key '{keyName}'.", ex);
                 MessageBox.Show(ex.Message, "Stream Drop Collector", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
@@ -68,9 +71,9 @@ namespace Core
             {
                 RegistryKey key = Registry.CurrentUser.CreateSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Run");
 
-                Debug.WriteLine($"{keyName}");
-                Debug.WriteLine($"Registry Key Before Delete: {key.GetValue(keyName)}");
-                
+                AppLogger.Debug("Utility", $"{keyName}");
+                AppLogger.Debug("Utility", $"Registry Key Before Delete: {key.GetValue(keyName)}");
+
                 if (key.GetValue(keyName) != null)
                     key.DeleteValue(keyName);
 
@@ -78,6 +81,7 @@ namespace Core
             }
             catch (Exception ex)
             {
+                AppLogger.Error("Utility", $"Failed to remove startup registry key '{keyName}'.", ex);
                 MessageBox.Show(ex.Message, "Stream Drop Collector", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }

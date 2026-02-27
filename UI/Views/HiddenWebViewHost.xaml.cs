@@ -140,7 +140,7 @@ namespace UI.Views
                             JsonElement bodyJson = JsonDocument.Parse(bodyResult).RootElement;
                             string body = bodyJson.GetProperty("body").GetString() ?? "";
 
-                            Debug.WriteLine($"Body captured for ViewerDropsDashboard response: {body}\n\nlength={body.Length}");
+                            AppLogger.Debug("WebViewCapture", $"Body captured for ViewerDropsDashboard response: {body}\n\nlength={body.Length}");
 
                             if (body.Contains("ViewerDropsDashboard") || body.Contains("rewardCampaignsAvailableToUser"))
                             {
@@ -220,7 +220,7 @@ namespace UI.Views
                             JsonElement bodyJson = JsonDocument.Parse(bodyResult).RootElement;
                             string body = bodyJson.GetProperty("body").GetString() ?? "";
 
-                            Debug.WriteLine($"Body captured for dropCampaignsInProgress response: {body}\n\nlength={body.Length}");
+                            AppLogger.Debug("WebViewCapture", $"Body captured for dropCampaignsInProgress response: {body}\n\nlength={body.Length}");
 
                             if (body.Contains("dropCampaignsInProgress") || body.Contains("dropCampaignsInProgress"))
                             {
@@ -305,14 +305,14 @@ namespace UI.Views
 
                             if (body.Contains("claimed") || body.Contains("progress_units") || body.Contains("rewards"))
                             {
-                                Debug.WriteLine($"[Kick Progress] SUCCESS - REAL RESPONSE CAPTURED ({body.Length} chars)");
+                                AppLogger.Debug("WebViewCapture", $"[Kick Progress] SUCCESS - REAL RESPONSE CAPTURED ({body.Length} chars)");
                                 responseReceived.DevToolsProtocolEventReceived -= Handler;
                                 tcs.TrySetResult(body);
                             }
                         }
                         catch (Exception ex)
                         {
-                            Debug.WriteLine($"[Kick Progress] getResponseBody failed: {ex.Message}");
+                            AppLogger.Warn("WebViewCapture", $"[Kick Progress] getResponseBody failed: {ex.Message}");
                         }
                     });
                 }
@@ -398,7 +398,10 @@ namespace UI.Views
                         }
                     }
                 }
-                catch { /* firehose - ignore */ }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("WebViewCapture", $"CaptureRequestHeaderAsync handler failed: {ex.Message}");
+                }
             }
 
             eventReceiver.DevToolsProtocolEventReceived += Handler;
@@ -435,71 +438,174 @@ namespace UI.Views
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(timeoutMs);
 
             TaskCompletionSource<string> tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ConcurrentDictionary<string, byte> candidateRequestIds = new ConcurrentDictionary<string, byte>();
+            int cleanedUp = 0;
+
+            CoreWebView2DevToolsProtocolEventReceiver? requestWillBeSentReceiver = null;
+            CoreWebView2DevToolsProtocolEventReceiver? loadingFinishedReceiver = null;
+            EventHandler<CoreWebView2DevToolsProtocolEventReceivedEventArgs>? onRequestWillBeSent = null;
+            EventHandler<CoreWebView2DevToolsProtocolEventReceivedEventArgs>? onLoadingFinished = null;
+
+            bool IsMatchingOperationPayload(string postData)
+            {
+                if (string.IsNullOrWhiteSpace(postData) || !postData.Contains("sha256Hash", StringComparison.Ordinal))
+                    return false;
+
+                using JsonDocument doc = JsonDocument.Parse(postData);
+                IEnumerable<JsonElement> operations = doc.RootElement.ValueKind == JsonValueKind.Array
+                    ? doc.RootElement.EnumerateArray()
+                    : Enumerable.Repeat(doc.RootElement, 1);
+
+                return operations.Any(op =>
+                    op.TryGetProperty("operationName", out JsonElement name) &&
+                    string.Equals(name.GetString(), triggerText, StringComparison.Ordinal));
+            }
+
+            static bool IsTargetGqlPostRequest(JsonElement requestElement)
+            {
+                string method = requestElement.TryGetProperty("method", out JsonElement methodElement)
+                    ? (methodElement.GetString() ?? string.Empty)
+                    : string.Empty;
+
+                if (!string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                string url = requestElement.TryGetProperty("url", out JsonElement urlElement)
+                    ? (urlElement.GetString() ?? string.Empty)
+                    : string.Empty;
+
+                if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? uri))
+                    return false;
+
+                return string.Equals(uri.Host, "gql.twitch.tv", StringComparison.OrdinalIgnoreCase) &&
+                       uri.AbsolutePath.StartsWith("/gql", StringComparison.OrdinalIgnoreCase);
+            }
+
+            void Cleanup()
+            {
+                if (Interlocked.Exchange(ref cleanedUp, 1) != 0)
+                    return;
+
+                if (!WebView.Dispatcher.HasShutdownStarted)
+                {
+                    _ = WebView.Dispatcher.InvokeAsync(() =>
+                    {
+                        if (requestWillBeSentReceiver != null && onRequestWillBeSent != null)
+                            requestWillBeSentReceiver.DevToolsProtocolEventReceived -= onRequestWillBeSent;
+
+                        if (loadingFinishedReceiver != null && onLoadingFinished != null)
+                            loadingFinishedReceiver.DevToolsProtocolEventReceived -= onLoadingFinished;
+                    });
+                }
+            }
+
+            async Task TryResolveRequestPostDataAsync(string requestId)
+            {
+                try
+                {
+                    string result = await (await WebView.Dispatcher.InvokeAsync(async () =>
+                        await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync(
+                            "Network.getRequestPostData",
+                            JsonSerializer.Serialize(new { requestId })))).ConfigureAwait(false);
+
+                    using JsonDocument resultDoc = JsonDocument.Parse(result);
+                    if (!resultDoc.RootElement.TryGetProperty("postData", out JsonElement postDataElement))
+                        return;
+
+                    string? postData = postDataElement.GetString();
+                    if (string.IsNullOrWhiteSpace(postData))
+                        return;
+
+                    if (IsMatchingOperationPayload(postData))
+                    {
+                        Cleanup();
+                        tcs.TrySetResult(postData);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AppLogger.Warn("WebViewCapture", $"CaptureGqlRequestBodyContainingAsync loading handler failed: {ex.Message}");
+                }
+            }
 
             // Ensure everything up to subscription happens on UI thread
             await (await WebView.Dispatcher.InvokeAsync(async () =>
             {
                 await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.enable", "{}");
 
-                CoreWebView2DevToolsProtocolEventReceiver loadingReceiver = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.loadingFinished");
+                requestWillBeSentReceiver = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.requestWillBeSent");
+                loadingFinishedReceiver = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.loadingFinished");
 
-                void OnLoadingFinished(object? s, CoreWebView2DevToolsProtocolEventReceivedEventArgs e)
+                onRequestWillBeSent = (s, e) =>
                 {
-                    // This still may fire on background thread -> marshal inner work back to UI
-                    _ = WebView.Dispatcher.InvokeAsync(async () =>
+                    try
                     {
-                        try
+                        using JsonDocument doc = JsonDocument.Parse(e.ParameterObjectAsJson);
+                        JsonElement root = doc.RootElement;
+
+                        if (!root.TryGetProperty("requestId", out JsonElement requestIdElement))
+                            return;
+
+                        string? requestId = requestIdElement.GetString();
+                        if (string.IsNullOrWhiteSpace(requestId))
+                            return;
+
+                        if (!root.TryGetProperty("request", out JsonElement requestElement))
+                            return;
+
+                        if (!IsTargetGqlPostRequest(requestElement))
+                            return;
+
+                        if (requestElement.TryGetProperty("hasPostData", out JsonElement hasPostDataElement) && hasPostDataElement.ValueKind != JsonValueKind.True)
+                            return;
+
+                        if (requestElement.TryGetProperty("postData", out JsonElement postDataElement))
                         {
-                            JsonElement root = JsonDocument.Parse(e.ParameterObjectAsJson).RootElement;
-                            string? requestId = root.GetProperty("requestId").GetString();
-                            if (requestId == null)
-                                return;
-
-                            string result = await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync("Network.getRequestPostData", JsonSerializer.Serialize(new { requestId }));
-
-                            string? postData = JsonDocument.Parse(result).RootElement.GetProperty("postData").GetString();
-                            if (string.IsNullOrEmpty(postData))
-                                return;
-
-                            if (!postData.Contains("sha256Hash"))
-                                return;
-
-                            using JsonDocument doc = JsonDocument.Parse(postData);
-                            IEnumerable<JsonElement> operations = doc.RootElement.ValueKind == JsonValueKind.Array
-                                ? doc.RootElement.EnumerateArray()
-                                : Enumerable.Repeat(doc.RootElement, 1);
-
-                            bool found = operations.Any(op => op.TryGetProperty("operationName", out JsonElement name) && string.Equals(name.GetString(), triggerText, StringComparison.Ordinal));
-
-                            if (found)
+                            string? inlinePostData = postDataElement.GetString();
+                            if (!string.IsNullOrWhiteSpace(inlinePostData) && IsMatchingOperationPayload(inlinePostData))
                             {
                                 Cleanup();
-                                tcs.TrySetResult(postData);
+                                tcs.TrySetResult(inlinePostData);
+                                return;
                             }
                         }
-                        catch
-                        {
-                            // Swallow – avoid crashing browser process
-                        }
-                    });
-                }
 
-                loadingReceiver.DevToolsProtocolEventReceived += OnLoadingFinished;
+                        candidateRequestIds.TryAdd(requestId, 0);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn("WebViewCapture", $"CaptureGqlRequestBodyContainingAsync request handler failed: {ex.Message}");
+                    }
+                };
 
-                // Store receiver or handler somewhere if needed for later cleanup, but we'll use this local Cleanup
-                void Cleanup()
+                onLoadingFinished = (s, e) =>
                 {
-                    WebView.Dispatcher.Invoke(() => loadingReceiver.DevToolsProtocolEventReceived -= OnLoadingFinished);
-                }
+                    try
+                    {
+                        using JsonDocument doc = JsonDocument.Parse(e.ParameterObjectAsJson);
+                        JsonElement root = doc.RootElement;
+
+                        if (!root.TryGetProperty("requestId", out JsonElement requestIdElement))
+                            return;
+
+                        string? requestId = requestIdElement.GetString();
+                        if (string.IsNullOrWhiteSpace(requestId))
+                            return;
+
+                        if (!candidateRequestIds.TryRemove(requestId, out _))
+                            return;
+
+                        _ = TryResolveRequestPostDataAsync(requestId);
+                    }
+                    catch (Exception ex)
+                    {
+                        AppLogger.Warn("WebViewCapture", $"CaptureGqlRequestBodyContainingAsync loading handler failed: {ex.Message}");
+                    }
+                };
+
+                requestWillBeSentReceiver.DevToolsProtocolEventReceived += onRequestWillBeSent;
+                loadingFinishedReceiver.DevToolsProtocolEventReceived += onLoadingFinished;
             })).ConfigureAwait(false);
-
-            void Cleanup()
-            {
-                WebView.Dispatcher.Invoke(() =>
-                {
-                    CoreWebView2DevToolsProtocolEventReceiver receiver = WebView.CoreWebView2.GetDevToolsProtocolEventReceiver("Network.loadingFinished");
-                });
-            }
 
             // External cancellation
             using CancellationTokenRegistration externalReg = ct.Register(() =>
@@ -548,6 +654,10 @@ namespace UI.Views
             {
                 try
                 {
+                    Task<string> captureTask = CaptureGqlRequestBodyContainingAsync(triggerText, timeoutMs, ct);
+
+                    await WebView.Dispatcher.InvokeAsync(() => { });
+
                     // Fresh navigation each retry to force new request
                     await ForceRefreshAsync();
 
@@ -557,21 +667,22 @@ namespace UI.Views
                         await ExecuteScriptAsync(preCaptureJs);
                     }
 
-                    return await CaptureGqlRequestBodyContainingAsync(triggerText, timeoutMs, ct);
+                    return await captureTask;
                 }
                 catch (TimeoutException ex)
                 {
                     lastException = ex;
-                    Debug.WriteLine($"[GQL Capture] Attempt {attempt}/{maxRetries} timed out for '{triggerText}'");
+                    AppLogger.Warn("WebViewCapture", $"[GQL Capture] Attempt {attempt}/{maxRetries} timed out for '{triggerText}'");
                 }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
                 {
+                    AppLogger.Info("WebViewCapture", $"[GQL Capture] Capture canceled for '{triggerText}'. {ex.Message}");
                     throw; // User cancel — don't retry
                 }
                 catch (Exception ex)
                 {
                     lastException = ex;
-                    Debug.WriteLine($"[GQL Capture] Attempt {attempt}/{maxRetries} failed: {ex.Message}");
+                    AppLogger.Warn("WebViewCapture", $"[GQL Capture] Attempt {attempt}/{maxRetries} failed: {ex.Message}");
                 }
 
                 if (attempt < maxRetries)
@@ -596,7 +707,7 @@ namespace UI.Views
             string? encodedToken = await GetCookieValueAsync("https://kick.com", "session_token");
             if (string.IsNullOrEmpty(encodedToken))
             {
-                Debug.WriteLine("[Kick] session_token cookie not found");
+                AppLogger.Warn("KickClaim", "session_token cookie not found");
                 return false;
             }
 
@@ -660,7 +771,7 @@ namespace UI.Views
 
                 if (rawResult == "{}" || string.IsNullOrWhiteSpace(rawResult))
                 {
-                    Debug.WriteLine("[Kick] Claim timed out or no response");
+                    AppLogger.Warn("KickClaim", "Claim timed out or no response");
                     return false;
                 }
 
@@ -669,21 +780,21 @@ namespace UI.Views
 
                 if (success)
                 {
-                    Debug.WriteLine($"[DropsInventoryManager] Successfully claimed Kick drop: {rewardId} (Campaign: {campaignId})");
+                    AppLogger.Debug("KickClaim", $"Successfully claimed Kick drop: {rewardId} (Campaign: {campaignId})");
                 }
                 else
                 {
                     string? error = doc.RootElement.TryGetProperty("error", out JsonElement errElem)
                         ? errElem.GetString()
                         : "Unknown error";
-                    Debug.WriteLine($"[DropsInventoryManager] Kick claim failed: {error}");
+                    AppLogger.Warn("KickClaim", $"Kick claim failed: {error}");
                 }
 
                 return success;
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[DropsInventoryManager] Exception in ClaimKickDropAsync: {ex.Message}");
+                AppLogger.Error("KickClaim", "Exception in ClaimKickDropAsync.", ex);
                 return false;
             }
             finally

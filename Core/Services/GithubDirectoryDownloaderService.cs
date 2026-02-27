@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Net.Http;
 using System.Net;
 using System.IO;
+using Core.Logging;
 
 namespace Core.Services
 {
@@ -44,7 +45,7 @@ namespace Core.Services
             HttpClientHandler httpClientHandler = new HttpClientHandler();
             httpClientHandler.AllowAutoRedirect = true;
             httpClientHandler.SslProtocols = SslProtocols.Tls12; // Set the SSL/TLS version (for example, TLS 1.2)
-            
+
             //httpClientHandler.ServerCertificateCustomValidationCallback = (message, cert, chain, sslPolicyErrors) =>
             //{
             //    return true;
@@ -116,14 +117,15 @@ namespace Core.Services
             {
                 await StartDownloadAsync(downloadPath);
 
-                Debug.WriteLine("waiting for tasks to complete");
+                AppLogger.Debug("GitHubDownloader", "waiting for tasks to complete");
                 await Task.WhenAll(_downloadTasks);
                 await Task.WhenAll(_subfolderTasks);
 
                 SaveSHAHashes(_currentFiles);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                AppLogger.Error("GitHubDownloader", "DownloadDirectoryAsync failed.", ex);
                 throw;
             }
         }
@@ -165,12 +167,12 @@ namespace Core.Services
                     // Convert UTC to local time
                     resetLocal = resetUtc.ToLocalTime();
 
-                    Debug.WriteLine($"Rate limit resets at: {resetLocal}");
+                    AppLogger.Warn("GitHubDownloader", $"Rate limit resets at: {resetLocal}");
                     OnProgressChanged(new ProgressEventArgs(0, $"API rate limit exceeded, try again after {resetLocal:T}"));
                 }
                 else
                 {
-                    Debug.WriteLine("Failed to parse x-ratelimit-reset header.");
+                    AppLogger.Warn("GitHubDownloader", "Failed to parse x-ratelimit-reset header.");
                     OnProgressChanged(new ProgressEventArgs(0, $"API rate limit exceeded, try again later"));
                 }
 
@@ -214,7 +216,7 @@ namespace Core.Services
                             else
                             {
                                 // Move file manually if it's already downloaded, from the base path to the download path
-                                Debug.WriteLine($"Skipping unchanged file: {item.Name}");
+                                AppLogger.Debug("GitHubDownloader", $"Skipping unchanged file: {item.Name}");
                                 File.Copy(oldFilePath, localFilePath, true);
                                 lock (_lockDownloadedSize)
                                 {
@@ -255,12 +257,12 @@ namespace Core.Services
         {
             try
             {
-                Debug.WriteLine($"[START] Downloading file: {item.Name} | Size: {item.Size ?? -1} bytes");
+                AppLogger.Debug("GitHubDownloader", $"[START] Downloading file: {item.Name} | Size: {item.Size ?? -1} bytes");
 
                 Stopwatch sw = Stopwatch.StartNew();
                 using HttpResponseMessage response = await _httpClient.GetAsync(item.DownloadUrl!);
                 sw.Stop();
-                Debug.WriteLine($"[HEADERS DONE] {item.Name} in {sw.ElapsedMilliseconds} ms | Status: {response.StatusCode}");
+                AppLogger.Debug("GitHubDownloader", $"[HEADERS DONE] {item.Name} in {sw.ElapsedMilliseconds} ms | Status: {response.StatusCode}");
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -268,7 +270,7 @@ namespace Core.Services
                     sw.Restart();
                     await response.Content.CopyToAsync(fileStream);
                     sw.Stop();
-                    Debug.WriteLine($"[DOWNLOAD DONE] {item.Name} ({fileStream.Length} bytes) in {sw.ElapsedMilliseconds} ms");
+                    AppLogger.Debug("GitHubDownloader", $"[DOWNLOAD DONE] {item.Name} ({fileStream.Length} bytes) in {sw.ElapsedMilliseconds} ms");
 
                     _fileHashes[item.Path!] = item.Sha!;
 
@@ -281,16 +283,16 @@ namespace Core.Services
                 else
                 {
                     string error = await response.Content.ReadAsStringAsync();
-                    Debug.WriteLine($"[FAIL] {item.Name}: {response.StatusCode} | {error}");
+                    AppLogger.Warn("GitHubDownloader", $"[FAIL] {item.Name}: {response.StatusCode} | {error}");
                 }
             }
             catch (TaskCanceledException tcex)
             {
-                Debug.WriteLine($"[TIMEOUT/CANCEL] {item.Name}: {tcex.Message} (IsTimeout: {!tcex.CancellationToken.IsCancellationRequested})");
+                AppLogger.Warn("GitHubDownloader", $"[TIMEOUT/CANCEL] {item.Name}: {tcex.Message} (IsTimeout: {!tcex.CancellationToken.IsCancellationRequested})");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[ERROR] {item.Name}: {ex}");
+                AppLogger.Error("GitHubDownloader", $"[ERROR] {item.Name}", ex);
             }
         }
         /// <summary>

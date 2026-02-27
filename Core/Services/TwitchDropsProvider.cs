@@ -1,5 +1,4 @@
 ﻿using System.Text.Json.Nodes;
-using System.Diagnostics;
 using Core.Logging;
 using Core.Interfaces;
 using Core.Models;
@@ -81,7 +80,7 @@ namespace Core.Services
 
                 if (requests.Count == 0)
                 {
-                    Debug.WriteLine("[Drops] No valid dropIDs to query.");
+                    AppLogger.Debug("TwitchDrops", "No valid dropIDs to query.");
                     AppLogger.Warn("TwitchDrops", "No valid drop IDs available for details query.");
                     return [];
                 }
@@ -89,7 +88,7 @@ namespace Core.Services
                 // Fetch the full details in batches
                 Dictionary<string, JsonObject> campaignDetails = await gql.QueryDropCampaignDetailsBatchAsync(requests, ct);
 
-                Debug.WriteLine($"[Drops] Successfully fetched detailed data for {campaignDetails.Count} campaigns.");
+                AppLogger.Debug("TwitchDrops", $"Successfully fetched detailed data for {campaignDetails.Count} campaigns.");
                 AppLogger.Info("TwitchDrops", $"Campaign details fetched. requested={requests.Count}, received={campaignDetails.Count}");
 
                 List<DropsCampaign> result = new List<DropsCampaign>();
@@ -172,7 +171,6 @@ namespace Core.Services
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[Drops] Error fetching active campaigns: {ex}");
                 AppLogger.Error("TwitchDrops", "Fetching active campaigns failed.", ex);
                 return [];
             }

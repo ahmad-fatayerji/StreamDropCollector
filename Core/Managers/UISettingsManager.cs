@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Net.Http;
+using Core.Logging;
 using Core.Models;
 using Core.Enums;
 using System.IO;
@@ -244,7 +245,7 @@ namespace Core.Managers
 
                                 timer.Start();
 
-                                Debug.WriteLine($"[Update Check] Skipping check. Next check in {timeLeft.TotalHours:F1} hours.");
+                                AppLogger.Debug("UISettings", $"[Update Check] Skipping check. Next check in {timeLeft.TotalHours:F1} hours.");
 
                                 return; // Skip check
                             }
@@ -266,7 +267,7 @@ namespace Core.Managers
 
                                 timer.Start();
 
-                                Debug.WriteLine($"[Update Check] Skipping check. Next check in {timeLeft.TotalHours:F1} hours.");
+                                AppLogger.Debug("UISettings", $"[Update Check] Skipping check. Next check in {timeLeft.TotalHours:F1} hours.");
 
                                 return; // Skip check
                             }
@@ -289,8 +290,9 @@ namespace Core.Managers
 
                     serverUpdateInfo = JsonSerializer.Deserialize<UpdateInfo>(await client.GetStringAsync("https://raw.githubusercontent.com/tsgsOFFICIAL/StreamDropCollector/master/updateInfo.sdc")) ?? new UpdateInfo();
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    AppLogger.Warn("UISettings", $"Update check request failed: {ex.Message}");
                     UpdateAvailable = false;
                     return;
                 }
@@ -335,7 +337,9 @@ namespace Core.Managers
                 }
             }
             catch (Exception ex) when (ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
-            { }
+            {
+                AppLogger.Warn("UISettings", $"LoadSettings failed and defaults are used. {ex.GetType().Name}: {ex.Message}");
+            }
 
             UpdateStartupRegistry();
         }
@@ -370,7 +374,7 @@ namespace Core.Managers
             }
             catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
             {
-
+                AppLogger.Warn("UISettings", $"SaveSettings failed. {ex.GetType().Name}: {ex.Message}");
             }
         }
         /// <summary>
@@ -451,7 +455,7 @@ namespace Core.Managers
             catch (Exception ex)
             {
                 // Never let registry errors crash settings flow
-                System.Diagnostics.Debug.WriteLine($"[Startup Registry] Failed: {ex.Message}");
+                AppLogger.Error("UISettings", "[Startup Registry] Failed", ex);
                 // Optional: show non-blocking toast later if you want
             }
         }

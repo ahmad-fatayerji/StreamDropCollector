@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.IO;
+using Core.Managers;
 
 namespace Core.Logging
 {
@@ -10,10 +11,7 @@ namespace Core.Logging
         private static readonly object _sync = new();
         private static string? _logFilePath;
 
-        public static string LogDirectoryPath => Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "StreamDropCollector",
-            "logs");
+        public static string LogDirectoryPath => Path.Combine(Environment.ExpandEnvironmentVariables("%APPDATA%"), "Stream Drop Collector", "logs");
 
         public static string? LogFilePath => _logFilePath;
 
@@ -36,6 +34,14 @@ namespace Core.Logging
         }
 
         public static void Info(string scope, string message) => Write("INFO", scope, message);
+
+        public static void Debug(string scope, string message)
+        {
+            if (!IsVerboseDebugEnabled())
+                return;
+
+            Write("DEBUG", scope, message);
+        }
 
         public static void Warn(string scope, string message) => Write("WARN", scope, message);
 
@@ -67,11 +73,23 @@ namespace Core.Logging
                     File.AppendAllText(_logFilePath!, line + Environment.NewLine, Encoding.UTF8);
                 }
 
-                Debug.WriteLine(line);
+                Trace.WriteLine(line);
+            }
+            catch (Exception ex)
+            {
+                Trace.WriteLine($"[AppLogger-Fallback] {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        private static bool IsVerboseDebugEnabled()
+        {
+            try
+            {
+                return UISettingsManager.Instance.VerboseDebugLogging;
             }
             catch
             {
-                // Never throw from logger.
+                return false;
             }
         }
     }

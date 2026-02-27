@@ -1,9 +1,14 @@
 {
-  "version": "1.0.14",
+  "version": "1.0.15",
   "type": "Patch",
-  "description": "Improved WebView waiting reliability and dispatcher async handling.",
-  "changelog": "Added a standalone WaitForNetworkIdleAsync helper for generic page settling and fixed dispatcher-invoked async calls that could continue before inner tasks completed.",
+  "description": "Improved Twitch reliability and inventory responsiveness.",
+  "changelog": "Added persistent GQL hash caching with retry-aware fallback, immediate claimed-badge inventory updates after auto-claim, remembered streamer selection, and verbose-gated debug/cache logging.",
   "historic_versions": [
+    {
+      "version": "1.0.14",
+      "type": "Patch",
+      "changelog": "Improved WebView waiting reliability and dispatcher async handling."
+    },
     {
       "version": "1.0.13",
       "type": "Patch",
