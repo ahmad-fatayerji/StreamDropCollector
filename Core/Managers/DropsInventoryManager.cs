@@ -67,9 +67,49 @@ namespace Core.Managers
         private DropsInventoryManager()
         {
             LoadLastWatchedStreamers();
+            UISettingsManager.Instance.MiningPriorityModeChanged += OnMiningPriorityModeChanged;
 
             _liveProgressTimer.Elapsed += OnLiveProgressTick;
             _liveProgressTimer.AutoReset = true;
+        }
+
+        private void OnMiningPriorityModeChanged(MiningPriorityMode mode)
+        {
+            _ = ApplyMiningPriorityModeChangeAsync(mode);
+        }
+
+        private async Task ApplyMiningPriorityModeChangeAsync(MiningPriorityMode mode)
+        {
+            try
+            {
+                AppLogger.Info("Miner", $"Mining priority mode changed to {mode}. Triggering immediate re-evaluation.");
+
+                if (_isPaused)
+                {
+                    AppLogger.Warn("Miner", "Priority mode changed while miner is paused; re-evaluation skipped.");
+                    return;
+                }
+
+                if (!ActiveCampaigns.Any())
+                {
+                    AppLogger.Warn("Miner", "Priority mode changed but there are no active campaigns; re-evaluation skipped.");
+                    return;
+                }
+
+                if (TwitchWebView == null && KickWebView == null)
+                {
+                    AppLogger.Warn("Miner", "Priority mode changed but no webviews are initialized; re-evaluation skipped.");
+                    return;
+                }
+
+                AppLogger.Debug("Miner", $"Immediate re-evaluation starting after priority mode change. activeCampaigns={ActiveCampaigns.Count}");
+                await StartWatchingStreams(true);
+                AppLogger.Info("Miner", "Immediate re-evaluation completed after priority mode change.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Miner", "Failed to apply mining priority mode change immediately.", ex);
+            }
         }
 
         private void ApplyMinuteProgressToActiveCampaign(Platform platform, string campaignId, int minutesToAdd)
@@ -841,17 +881,44 @@ namespace Core.Managers
         /// percentage, the campaign closest to earning its next unclaimed reward is selected.</returns>
         private Task<DropsCampaign?> SelectBestCampaign(List<DropsCampaign> campaigns)
         {
-            List<DropsCampaign> prioritizedCampaigns = [.. campaigns
-                // 1) Non-general drops first (false), then general drops (true)
-                .OrderBy(c => c.IsGeneralDrop)
+            MiningPriorityMode mode = UISettingsManager.Instance.MiningPriorityMode;
+            AppLogger.Debug("Selection", $"Selecting best campaign with mode={mode}, candidates={campaigns.Count}");
+            List<DropsCampaign> prioritizedCampaigns = mode switch
+            {
+                MiningPriorityMode.EndingSoonest => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenBy(c => c.EndsAt)
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))],
+                MiningPriorityMode.LeastTimeToNextReward => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))
+                        .ThenByDescending(c => c.CompletionPercentage())],
+                MiningPriorityMode.HighestCompletion => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenByDescending(c => c.CompletionPercentage())
+                        .ThenBy(c => c.EndsAt)
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))],
+                _ => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenByDescending(c => c.CompletionPercentage())
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))],
+            };
 
-                // 2) highest completion % -> then soonest to complete next reward
-                .ThenByDescending(c => c.CompletionPercentage())
-                .ThenBy(c => c.Rewards
-                    .Where(r => !r.IsClaimed)
-                    .Min(r => r.RequiredMinutes - r.ProgressMinutes))];
+            DropsCampaign? selected = prioritizedCampaigns.FirstOrDefault();
+            if (selected == null)
+                AppLogger.Warn("Selection", "No campaign selected after priority sort.");
+            else
+                AppLogger.Info("Selection", $"Selected campaign '{selected.Name}' ({selected.Id}) with mode={mode}.");
 
-            return Task.FromResult(prioritizedCampaigns.FirstOrDefault());
+            return Task.FromResult(selected);
         }
         /// <summary>
         /// Attempts to set the Kick stream playback quality to the lowest available option asynchronously.

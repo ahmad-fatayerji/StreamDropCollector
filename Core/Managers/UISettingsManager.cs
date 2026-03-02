@@ -18,6 +18,7 @@ namespace Core.Managers
         private static readonly Lazy<UISettingsManager> _instance = new(() => new UISettingsManager());
         public static UISettingsManager Instance => _instance.Value;
         public event PropertyChangedEventHandler? PropertyChanged;
+        public event Action<MiningPriorityMode>? MiningPriorityModeChanged;
         private static readonly string _settingsFilePath = Path.Combine(Environment.ExpandEnvironmentVariables("%APPDATA%"), "Stream Drop Collector", "Settings.json");
         private static readonly JsonSerializerOptions _jsonOptions = new()
         {
@@ -36,6 +37,7 @@ namespace Core.Managers
         private bool _updateAvailable = false;
         private bool _notifyOnNewUpdateAvailable = true;
         private DateTime? _lastUpdateCheck = null;
+        private MiningPriorityMode _miningPriorityMode = MiningPriorityMode.AvailabilityThenProgress;
         private List<string> _twitchGameWhitelistSlugs = new List<string>();
         private List<string> _kickGameWhitelistSlugs = new List<string>();
         private bool _isUpdatingGameFilterOptions;
@@ -130,6 +132,15 @@ namespace Core.Managers
                     if (!value && NotifyOnAutoClaimed)
                         NotifyOnAutoClaimed = false;
                 }
+            }
+        }
+        public MiningPriorityMode MiningPriorityMode
+        {
+            get => _miningPriorityMode;
+            set
+            {
+                if (SetField(ref _miningPriorityMode, value) && !_isLoadingSettings)
+                    MiningPriorityModeChanged?.Invoke(value);
             }
         }
         /// <summary>
@@ -349,6 +360,7 @@ namespace Core.Managers
                     Theme = settings.Theme ?? "System";
                     UpdateFrequency = settings.UpdateFrequency;
                     AutoClaimRewards = settings.AutoClaimRewards;
+                    MiningPriorityMode = settings.MiningPriorityMode;
                     NotifyOnReadyToClaim = settings.NotifyOnReadyToClaim;
                     NotifyOnAutoClaimed = settings.NotifyOnAutoClaimed;
                     VerboseDebugLogging = settings.VerboseDebugLogging;
@@ -391,6 +403,7 @@ namespace Core.Managers
                     Theme = Theme,
                     UpdateFrequency = UpdateFrequency,
                     AutoClaimRewards = AutoClaimRewards,
+                    MiningPriorityMode = MiningPriorityMode,
                     NotifyOnReadyToClaim = NotifyOnReadyToClaim,
                     NotifyOnAutoClaimed = NotifyOnAutoClaimed,
                     VerboseDebugLogging = VerboseDebugLogging,

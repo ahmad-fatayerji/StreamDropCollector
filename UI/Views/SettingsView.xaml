@@ -341,7 +341,22 @@
 
                         <CheckBox IsChecked="{Binding AutoClaimRewards, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Auto-claim rewards when ready"/>
+                                  Content="Auto-claim rewards when ready"
+                                  Margin="0,0,0,12"/>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                            <TextBlock Text="Mining priority" Foreground="{DynamicResource TextMutedBrush}"
+                                       Width="140" VerticalAlignment="Center"/>
+                            <ComboBox Width="260"
+                                      Style="{StaticResource NeonFlatComboBoxStyle}"
+                                      SelectedValue="{Binding MiningPriorityMode, Mode=TwoWay}"
+                                      SelectedValuePath="Tag">
+                                <ComboBoxItem Content="Availability + Progress" Tag="{x:Static enums:MiningPriorityMode.AvailabilityThenProgress}"/>
+                                <ComboBoxItem Content="Ending Soonest" Tag="{x:Static enums:MiningPriorityMode.EndingSoonest}"/>
+                                <ComboBoxItem Content="Least Time To Next Reward" Tag="{x:Static enums:MiningPriorityMode.LeastTimeToNextReward}"/>
+                                <ComboBoxItem Content="Highest Completion" Tag="{x:Static enums:MiningPriorityMode.HighestCompletion}"/>
+                            </ComboBox>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
 

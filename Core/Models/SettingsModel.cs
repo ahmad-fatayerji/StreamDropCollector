@@ -16,6 +16,7 @@ namespace Core.Models
         public bool UpdateAvailable { get; set; }
         public bool NotifyOnNewUpdateAvailable { get; set; }
         public DateTime? LastUpdateCheck { get; set; }
+        public MiningPriorityMode MiningPriorityMode { get; set; } = MiningPriorityMode.AvailabilityThenProgress;
         public List<string> TwitchGameWhitelistSlugs { get; set; } = new List<string>();
         public List<string> KickGameWhitelistSlugs { get; set; } = new List<string>();
     }
