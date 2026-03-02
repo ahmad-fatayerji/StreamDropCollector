@@ -50,6 +50,8 @@ namespace Core.Managers
         private readonly object _lastStreamerSync = new();
         private readonly Dictionary<string, string> _lastTwitchStreamers = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _lastKickStreamers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _campaignSnapshotSync = new();
+        private List<DropsCampaign> _lastKnownCampaigns = new();
 
         private static readonly string _lastWatchedStreamersFilePath = Path.Combine(
             Environment.ExpandEnvironmentVariables("%APPDATA%"),
@@ -68,6 +70,7 @@ namespace Core.Managers
         {
             LoadLastWatchedStreamers();
             UISettingsManager.Instance.MiningPriorityModeChanged += OnMiningPriorityModeChanged;
+            UISettingsManager.Instance.GameWhitelistChanged += OnGameWhitelistChanged;
 
             _liveProgressTimer.Elapsed += OnLiveProgressTick;
             _liveProgressTimer.AutoReset = true;
@@ -76,6 +79,11 @@ namespace Core.Managers
         private void OnMiningPriorityModeChanged(MiningPriorityMode mode)
         {
             _ = ApplyMiningPriorityModeChangeAsync(mode);
+        }
+
+        private void OnGameWhitelistChanged(Platform platform)
+        {
+            _ = ApplyGameWhitelistChangeAsync(platform);
         }
 
         private async Task ApplyMiningPriorityModeChangeAsync(MiningPriorityMode mode)
@@ -110,6 +118,72 @@ namespace Core.Managers
             {
                 AppLogger.Error("Miner", "Failed to apply mining priority mode change immediately.", ex);
             }
+        }
+
+        private async Task ApplyGameWhitelistChangeAsync(Platform platform)
+        {
+            try
+            {
+                AppLogger.Info("Miner", $"{platform} game whitelist changed. Triggering immediate re-evaluation.");
+
+                RefreshActiveCampaignsFromLatestSnapshot();
+
+                if (_isPaused)
+                {
+                    AppLogger.Warn("Miner", "Whitelist changed while miner is paused; re-evaluation skipped.");
+                    return;
+                }
+
+                if (!ActiveCampaigns.Any())
+                {
+                    AppLogger.Warn("Miner", "Whitelist changed but there are no active campaigns after filtering; re-evaluation skipped.");
+                    return;
+                }
+
+                if (TwitchWebView == null && KickWebView == null)
+                {
+                    AppLogger.Warn("Miner", "Whitelist changed but no webviews are initialized; re-evaluation skipped.");
+                    return;
+                }
+
+                AppLogger.Debug("Miner", $"Immediate re-evaluation starting after whitelist change. activeCampaigns={ActiveCampaigns.Count}");
+                await StartWatchingStreams(true);
+                AppLogger.Info("Miner", "Immediate re-evaluation completed after whitelist change.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Miner", "Failed to apply game whitelist change immediately.", ex);
+            }
+        }
+
+        private void RefreshActiveCampaignsFromLatestSnapshot()
+        {
+            List<DropsCampaign> snapshot;
+            lock (_campaignSnapshotSync)
+            {
+                snapshot = [.. _lastKnownCampaigns];
+            }
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                List<DropsCampaign> sourceCampaigns = snapshot.Count != 0
+                    ? snapshot
+                    : [.. ActiveCampaigns];
+
+                UISettingsManager.Instance.UpdateAvailableGameFilterOptions(sourceCampaigns);
+
+                List<DropsCampaign> filteredCampaigns = sourceCampaigns
+                    .Where(c => UISettingsManager.Instance.IsCampaignAllowedByWhitelist(c))
+                    .Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now)
+                    .OrderBy(x => x.GameName)
+                    .ToList();
+
+                ActiveCampaigns.Clear();
+                foreach (DropsCampaign campaign in filteredCampaigns)
+                    ActiveCampaigns.Add(campaign);
+
+                UpdateCurrentSelectionFlags();
+            });
         }
 
         private void ApplyMinuteProgressToActiveCampaign(Platform platform, string campaignId, int minutesToAdd)
@@ -221,6 +295,11 @@ namespace Core.Managers
         {
             _twitchGqlService = twitchGqlService;
             List<DropsCampaign> allCampaigns = campaigns.ToList();
+
+            lock (_campaignSnapshotSync)
+            {
+                _lastKnownCampaigns = [.. allCampaigns];
+            }
 
             Application.Current.Dispatcher.Invoke(() =>
             {

@@ -19,6 +19,7 @@ namespace Core.Managers
         public static UISettingsManager Instance => _instance.Value;
         public event PropertyChangedEventHandler? PropertyChanged;
         public event Action<MiningPriorityMode>? MiningPriorityModeChanged;
+        public event Action<Platform>? GameWhitelistChanged;
         private static readonly string _settingsFilePath = Path.Combine(Environment.ExpandEnvironmentVariables("%APPDATA%"), "Stream Drop Collector", "Settings.json");
         private static readonly JsonSerializerOptions _jsonOptions = new()
         {
@@ -574,6 +575,7 @@ namespace Core.Managers
 
             OnPropertyChanged(platform == Platform.Twitch ? nameof(TwitchWhitelistSummary) : nameof(KickWhitelistSummary));
             Task.Run(SaveSettings);
+            GameWhitelistChanged?.Invoke(platform);
         }
 
         public bool IsCampaignAllowedByWhitelist(DropsCampaign campaign)
@@ -678,6 +680,7 @@ namespace Core.Managers
 
             OnPropertyChanged(option.Platform == Platform.Twitch ? nameof(TwitchWhitelistSummary) : nameof(KickWhitelistSummary));
             Task.Run(SaveSettings);
+            GameWhitelistChanged?.Invoke(option.Platform);
         }
 
         private static List<string> NormalizeWhitelist(IEnumerable<string>? values)
