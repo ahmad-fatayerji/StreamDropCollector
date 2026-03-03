@@ -60,12 +60,23 @@ namespace Core.Managers
 
         private static bool IsVerboseDebugEnabled => UISettingsManager.Instance.VerboseDebugLogging;
 
+        /// <summary>
+        /// Logs a message at the informational level if verbose debug logging is enabled.
+        /// </summary>
+        /// <param name="scope">The logical scope or category associated with the log message. Used to group related log entries.</param>
+        /// <param name="message">The message to log. Should provide relevant information about the operation or event.</param>
         private static void VerboseLog(string scope, string message)
         {
             if (IsVerboseDebugEnabled)
                 AppLogger.Info(scope, message);
         }
 
+        /// <summary>
+        /// Initializes a new instance of the DropsInventoryManager class.
+        /// </summary>
+        /// <remarks>This constructor is private to enforce the singleton pattern. It sets up event
+        /// handlers and initializes internal state required for managing drops inventory. Instances of this class can
+        /// only be created internally within the class.</remarks>
         private DropsInventoryManager()
         {
             LoadLastWatchedStreamers();
@@ -76,16 +87,32 @@ namespace Core.Managers
             _liveProgressTimer.AutoReset = true;
         }
 
+        /// <summary>
+        /// Handles changes to the mining priority mode by applying the specified mode.
+        /// </summary>
+        /// <param name="mode">The new mining priority mode to apply.</param>
         private void OnMiningPriorityModeChanged(MiningPriorityMode mode)
         {
             _ = ApplyMiningPriorityModeChangeAsync(mode);
         }
-
+        /// <summary>
+        /// Handles changes to the game whitelist for the specified platform.
+        /// </summary>
+        /// <param name="platform">The platform for which the game whitelist has changed.</param>
         private void OnGameWhitelistChanged(Platform platform)
         {
             _ = ApplyGameWhitelistChangeAsync(platform);
         }
-
+        /// <summary>
+        /// Applies a change to the mining priority mode and triggers an immediate re-evaluation of active campaigns if
+        /// applicable.
+        /// </summary>
+        /// <remarks>If the miner is paused, there are no active campaigns, or no webviews are
+        /// initialized, the re-evaluation is skipped. Logging is performed to indicate the outcome of the
+        /// operation.</remarks>
+        /// <param name="mode">The new mining priority mode to apply. Determines how mining resources are prioritized during stream
+        /// evaluation.</param>
+        /// <returns>A task that represents the asynchronous operation.</returns>
         private async Task ApplyMiningPriorityModeChangeAsync(MiningPriorityMode mode)
         {
             try
@@ -119,7 +146,17 @@ namespace Core.Managers
                 AppLogger.Error("Miner", "Failed to apply mining priority mode change immediately.", ex);
             }
         }
-
+        /// <summary>
+        /// Applies changes to the game whitelist for the specified platform and triggers an immediate re-evaluation of
+        /// active campaigns if appropriate.
+        /// </summary>
+        /// <remarks>Re-evaluation is skipped if the miner is paused, if there are no active campaigns
+        /// after filtering, or if no webviews are initialized. Logging is performed to provide information about the
+        /// operation's progress and any conditions that prevent re-evaluation.</remarks>
+        /// <param name="platform">The platform for which the game whitelist has changed. Determines which set of campaigns and streams are
+        /// affected by the update.</param>
+        /// <returns>A task that represents the asynchronous operation of applying the whitelist change and re-evaluating active
+        /// campaigns.</returns>
         private async Task ApplyGameWhitelistChangeAsync(Platform platform)
         {
             try
@@ -155,7 +192,13 @@ namespace Core.Managers
                 AppLogger.Error("Miner", "Failed to apply game whitelist change immediately.", ex);
             }
         }
-
+        /// <summary>
+        /// Refreshes the list of active campaigns using the most recent campaign snapshot and updates the UI
+        /// accordingly.
+        /// </summary>
+        /// <remarks>This method synchronizes the active campaigns with the latest known snapshot and
+        /// applies UI filters to determine which campaigns are displayed. It must be called on the UI thread, as it
+        /// updates UI-bound collections and settings.</remarks>
         private void RefreshActiveCampaignsFromLatestSnapshot()
         {
             List<DropsCampaign> snapshot;
@@ -185,7 +228,17 @@ namespace Core.Managers
                 UpdateCurrentSelectionFlags();
             });
         }
-
+        /// <summary>
+        /// Applies the specified number of minutes of progress to the active campaign for the given platform and
+        /// campaign identifier.
+        /// </summary>
+        /// <remarks>If the specified campaign is not found or has no progress to make, no changes are
+        /// applied. The method updates the progress for all rewards in the campaign and synchronizes the current
+        /// campaign selection if applicable. This method must be called from the UI thread, as it updates UI-bound
+        /// collections.</remarks>
+        /// <param name="platform">The platform on which the campaign is active. Determines which campaign collection to update.</param>
+        /// <param name="campaignId">The unique identifier of the campaign to which progress will be applied.</param>
+        /// <param name="minutesToAdd">The number of minutes to add to the campaign's progress. Must be greater than zero.</param>
         private void ApplyMinuteProgressToActiveCampaign(Platform platform, string campaignId, int minutesToAdd)
         {
             if (minutesToAdd <= 0)
@@ -907,12 +960,12 @@ namespace Core.Managers
         }
         /// <summary>
         /// Begins periodic monitoring of the health status of the Twitch and Kick streams, triggering a re-evaluation
-        /// if either stream is detected as offline.
+        /// if either stream is detected as unhealthy.
         /// </summary>
         /// <remarks>This method sets up a timer to check the online status of both streams every 30
-        /// seconds. If either stream is offline, monitoring is temporarily stopped and an immediate re-selection of
-        /// streams is initiated. This helps ensure that the application responds promptly to changes in stream
-        /// availability.</remarks>
+        /// seconds. If either stream is offline, in the wrong category, or Twitch is showing an ad, monitoring is
+        /// temporarily stopped and an immediate re-selection of streams is initiated. This helps ensure that the
+        /// application responds promptly to changes in stream availability.</remarks>
         private void StartStreamHealthMonitoring()
         {
             _streamHealthTimer = new System.Timers.Timer(30 * 1000); // Every 30 seconds
@@ -923,22 +976,31 @@ namespace Core.Managers
                 {
                     bool twitchOnline = _currentTwitchCampaign != null && await IsTwitchStreamOnline();
                     bool twitchCorrectCategory = _currentTwitchCampaign != null && await IsTwitchStreamCategoryCorrect();
+                    bool twitchShowingAd = _currentTwitchCampaign != null && await IsTwitchShowingAd();
                     bool kickOnline = _currentKickCampaign != null && await IsKickStreamOnline();
                     bool kickCorrectCategory = _currentKickCampaign != null && await IsKickStreamCategoryCorrect();
 
                     AppLogger.Debug("HealthCheck", $"[Health Check] Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
-                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory}");
-                    AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
+                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory} | Twitch showing ad: {twitchShowingAd}");
+                    AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}, showingAd={twitchShowingAd}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
 
                     // Group campaigns by platform
                     List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
                     List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
 
-                    if (twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory)
-                     || kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory))
+                    bool twitchNeedsReevaluation = twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory || twitchShowingAd);
+                    bool kickNeedsReevaluation = kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory);
+
+                    if (twitchNeedsReevaluation || kickNeedsReevaluation)
                     {
-                        AppLogger.Debug("HealthCheck", "[Health Check] One or both streams offline -> forcing re-evaluation");
-                        AppLogger.Warn("HealthCheck", "Forcing re-evaluation due to stream health/category mismatch.");
+                        if (twitchShowingAd && !string.IsNullOrWhiteSpace(_currentTwitchCampaign?.Slug))
+                        {
+                            ForgetLastStreamerUrl(Platform.Twitch, _currentTwitchCampaign!.Slug);
+                            AppLogger.Warn("HealthCheck", $"Twitch ad detected for campaign '{_currentTwitchCampaign.Name}'. Forgetting remembered streamer to force a switch.");
+                        }
+
+                        AppLogger.Debug("HealthCheck", "[Health Check] Stream unhealthy -> forcing re-evaluation");
+                        AppLogger.Warn("HealthCheck", $"Forcing re-evaluation. twitchOnline={twitchOnline}, twitchCategoryOk={twitchCorrectCategory}, twitchAd={twitchShowingAd}, kickOnline={kickOnline}, kickCategoryOk={kickCorrectCategory}");
                         _streamHealthTimer?.Stop();
                         await StartWatchingStreams(true); // This will restart everything safely
                     }
@@ -1223,6 +1285,43 @@ namespace Core.Managers
             return isOnline;
         }
         /// <summary>
+        /// Determines asynchronously whether a Twitch advertisement is currently being displayed in the embedded web
+        /// view.
+        /// </summary>
+        /// <remarks>This method checks for the presence of known Twitch ad indicators in the web view's
+        /// DOM. It returns <see langword="false"/> if the web view is not available.</remarks>
+        /// <returns>A task that represents the asynchronous operation. The task result is <see langword="true"/> if a Twitch ad
+        /// is detected; otherwise, <see langword="false"/>.</returns>
+        private async Task<bool> IsTwitchShowingAd()
+        {
+            if (TwitchWebView == null)
+                return false;
+
+            string js = @"
+                (() => {
+                    const adSelectors = [
+                    '[data-a-target=""video-ad-countdown""]',
+                    '[data-a-target=""video-ad-label""]',
+                    '[data-test-selector=""ad-banner-default-text""]'
+                  ];
+
+                  // Check if ANY of these elements exist in the document
+                  return adSelectors.some(selector => 
+                    document.querySelector(selector) !== null
+                  );
+                })();
+            ";
+
+            string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView.ExecuteScriptAsync(js));
+            bool isAdShowing = rawResult?
+                .Trim()
+                .Trim('"')
+                .Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+
+            AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Twitch showing ad status: {isAdShowing}");
+            return isAdShowing;
+        }
+        /// <summary>
         /// Determines whether the current Twitch stream category matches the expected category for the active campaign.
         /// </summary>
         /// <remarks>This method retrieves the current category from the Twitch stream by executing a
@@ -1498,6 +1597,29 @@ namespace Core.Managers
 
             if (changed)
                 SaveLastWatchedStreamers();
+        }
+        /// <summary>
+        /// Removes the remembered streamer URL for the specified platform and campaign, if present.
+        /// </summary>
+        /// <param name="platform">The platform whose remembered streamer collection should be updated.</param>
+        /// <param name="campaignSlug">The campaign slug key associated with the remembered streamer.</param>
+        private void ForgetLastStreamerUrl(Platform platform, string? campaignSlug)
+        {
+            if (string.IsNullOrWhiteSpace(campaignSlug))
+                return;
+
+            bool removed;
+            lock (_lastStreamerSync)
+            {
+                Dictionary<string, string> target = platform == Platform.Twitch ? _lastTwitchStreamers : _lastKickStreamers;
+                removed = target.Remove(campaignSlug);
+            }
+
+            if (removed)
+            {
+                SaveLastWatchedStreamers();
+                AppLogger.Info("Selection", $"Forgot remembered streamer for platform={platform}, campaignSlug='{campaignSlug}'.");
+            }
         }
         /// <summary>
         /// Loads the last watched streamers from persistent storage and updates the internal state.
