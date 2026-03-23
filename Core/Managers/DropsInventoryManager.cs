@@ -509,13 +509,14 @@ namespace Core.Managers
                 _startWatchingCts = new CancellationTokenSource();
                 CancellationToken token = _startWatchingCts.Token;
 
+                // Immediately stop the live progress timer to prevent ticks during unstable state
+                _liveProgressTimer?.Stop();
+
                 // Reset current selections and progress
                 TwitchChannelChanged?.Invoke(string.Empty);
                 TwitchProgressChanged?.Invoke(0, 0);
-
                 KickChannelChanged?.Invoke(string.Empty);
                 KickProgressChanged?.Invoke(0, 0);
-
                 _twitchAppliedMinuteBucket = 0;
                 _kickAppliedMinuteBucket = 0;
 
@@ -523,6 +524,7 @@ namespace Core.Managers
 
                 AppLogger.Debug("Miner", "[DropsInventoryManager] Starting stream watching process...");
                 AppLogger.Info("Miner", $"StartWatchingStreams invoked. restartedInternally={restartedInternally}, activeCampaigns={ActiveCampaigns.Count}, paused={_isPaused}");
+
                 if (!restartedInternally)
                     MinerStatusChanged?.Invoke("Starting");
                 else
@@ -533,7 +535,6 @@ namespace Core.Managers
                 _streamHealthTimer?.Stop();
                 _recheckTimer?.Dispose();
                 _streamHealthTimer?.Dispose();
-
                 _recheckTimer = null;
                 _streamHealthTimer = null;
 
@@ -553,17 +554,14 @@ namespace Core.Managers
 
                 DateTime nextCheckAt = DateTime.Now.AddHours(1); // Fallback: recheck in 1 hour
 
-                // Get a list of ready to claim rewards, this means the reward is unclaimed and progress >= required
+                // Get a list of ready to claim rewards
                 List<DropsReward> readyToClaimRewards = [.. ActiveCampaigns.SelectMany(c => c.Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes >= r.RequiredMinutes))];
 
                 if (UISettingsManager.Instance.AutoClaimRewards)
                 {
-                    // Claim all ready rewards
                     foreach (DropsReward item in readyToClaimRewards)
                     {
                         DropsCampaign? parentCampaign = ActiveCampaigns.FirstOrDefault(c => c.Rewards.Contains(item));
-
-                        // If Twitch, use Gql.ClaimDropAsync()
                         if (parentCampaign == null)
                             continue;
 
@@ -597,11 +595,9 @@ namespace Core.Managers
                 }
                 else if (UISettingsManager.Instance.NotifyOnReadyToClaim)
                 {
-                    // Notify user that there are rewards ready to claim
                     NotificationManager.ShowNotification("Drop Ready to Claim", $"You have {readyToClaimRewards.Count} drops rewards ready to claim. Please claim them manually.");
                 }
 
-                // If nothing left to progress after claiming, stop and reset
                 if (!ActiveCampaigns.Any(c => c.HasProgressToMake()))
                 {
                     AppLogger.Debug("Miner", "[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
@@ -609,7 +605,6 @@ namespace Core.Managers
                     MinerStatusChanged?.Invoke("Idle");
                     _currentTwitchCampaign = null;
                     _currentKickCampaign = null;
-                    _liveProgressTimer.Stop();
                     UpdateCurrentSelectionFlags();
                     return;
                 }
@@ -621,18 +616,18 @@ namespace Core.Managers
                 List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
                 List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
 
-                // Handle Twitch
+                // ────────────────────────────────────────────────────────────────
+                // Twitch handling
+                // ────────────────────────────────────────────────────────────────
                 if (twitchCampaigns.Count != 0 && TwitchWebView != null)
                 {
                     if (token.IsCancellationRequested)
                         return;
 
                     List<DropsCampaign> remainingTwitchCampaigns = [.. twitchCampaigns];
-
                     while (remainingTwitchCampaigns.Count != 0)
                     {
                         DropsCampaign? bestTwitch = await SelectBestCampaign(remainingTwitchCampaigns);
-
                         if (bestTwitch == null)
                             break;
 
@@ -640,7 +635,6 @@ namespace Core.Managers
                             return;
 
                         string twitchUrl = await SelectTwitchStreamerForCampaign(bestTwitch);
-
                         if (token.IsCancellationRequested)
                             return;
 
@@ -653,24 +647,12 @@ namespace Core.Managers
 
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(twitchUrl));
                         await Task.Delay(1500);
-
-                        // Dismiss mature content gate if present
                         await DismissTwitchMatureContentGateAsync();
-
-                        // Set stream to lowest quality
                         await SetTwitchStreamToLowestQualityAsync();
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ForceRefreshAsync());
-
                         await Task.Delay(5000);
 
-                        VerboseLog("SelectionBaseline",
-                            $"ABOUT to set Twitch baseline | " +
-                            $"newCampaign={bestTwitch.Id} | " +
-                            $"currentSeconds={_twitchWatchedSeconds} | " +
-                            $"currentApplied={_twitchAppliedMinuteBucket}");
-
                         _currentTwitchCampaign = bestTwitch;
-
                         bool twitchOnline = await IsTwitchStreamOnline();
                         bool twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
 
@@ -684,15 +666,13 @@ namespace Core.Managers
                         }
 
                         _lastKnownTwitchOnlineState = true;
-
                         UpdateCurrentSelectionFlags();
 
-                        // Campaign progress baseline uses all unclaimed rewards.
+                        // Sync baseline NOW - right after selection, before any further logic
                         _twitchWatchedSeconds = bestTwitch.Rewards
                             .Where(r => !r.IsClaimed)
                             .Sum(r => r.ProgressMinutes * 60);
 
-                        // Reward progress baseline uses the next reward only.
                         DropsReward? nextTwitchReward = bestTwitch.Rewards
                             .Where(r => !r.IsClaimed)
                             .OrderBy(r => r.RequiredMinutes)
@@ -726,7 +706,6 @@ namespace Core.Managers
                         if (soonestTwitch != null)
                         {
                             DateTime est = DateTime.Now.AddMinutes(soonestTwitch.RequiredMinutes - soonestTwitch.ProgressMinutes);
-
                             if (est < nextCheckAt)
                                 nextCheckAt = est;
                         }
@@ -740,18 +719,18 @@ namespace Core.Managers
                     }
                 }
 
-                // Handle Kick
+                // ────────────────────────────────────────────────────────────────
+                // Kick handling
+                // ────────────────────────────────────────────────────────────────
                 if (kickCampaigns.Count != 0 && KickWebView != null)
                 {
                     if (token.IsCancellationRequested)
                         return;
 
                     List<DropsCampaign> remainingKickCampaigns = [.. kickCampaigns];
-
                     while (remainingKickCampaigns.Count != 0)
                     {
                         DropsCampaign? bestKick = await SelectBestCampaign(remainingKickCampaigns);
-
                         if (bestKick == null)
                             break;
 
@@ -759,7 +738,6 @@ namespace Core.Managers
                             return;
 
                         string kickUrl = await SelectKickStreamerForCampaign(bestKick);
-
                         if (token.IsCancellationRequested)
                             return;
 
@@ -772,18 +750,12 @@ namespace Core.Managers
 
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(kickUrl));
                         await Task.Delay(1500);
-
-                        // Dismiss mature content gate if present
                         await DismissKickMatureContentGateAsync();
-
-                        // Set stream to lowest quality
                         await SetKickStreamToLowestQualityAsync();
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ForceRefreshAsync());
-
                         await Task.Delay(5000);
 
                         _currentKickCampaign = bestKick;
-
                         bool kickOnline = await IsKickStreamOnline();
                         bool kickCorrectCategory = await IsKickStreamCategoryCorrect();
 
@@ -797,8 +769,8 @@ namespace Core.Managers
                         }
 
                         _lastKnownKickOnlineState = true;
-
                         UpdateCurrentSelectionFlags();
+
                         _kickWatchedSeconds = bestKick.Rewards
                             .Where(r => !r.IsClaimed)
                             .Sum(r => r.ProgressMinutes * 60);
@@ -829,7 +801,6 @@ namespace Core.Managers
                         if (soonestKick != null)
                         {
                             DateTime est = DateTime.Now.AddMinutes(soonestKick.RequiredMinutes - soonestKick.ProgressMinutes);
-
                             if (est < nextCheckAt)
                                 nextCheckAt = est;
                         }
@@ -848,27 +819,28 @@ namespace Core.Managers
                     AppLogger.Warn("Miner", "No stream selected after evaluation cycle; status may oscillate with health checks.");
                 }
 
-                // Start periodic health check (every 60 seconds)
+                // Start periodic health check
                 StartStreamHealthMonitoring();
-                _liveProgressTimer.Start();
+
+                // ONLY NOW restart the live progress timer - state is consistent
+                _liveProgressTimer?.Start();
 
                 // Set timer to re-evaluate when the next reward is expected to complete (or fallback)
-                double delayMs = Math.Max((nextCheckAt - DateTime.Now).TotalMilliseconds, 60000); // At least 1 min
-
+                double delayMs = Math.Max((nextCheckAt - DateTime.Now).TotalMilliseconds, 60000);
                 _recheckTimer = new System.Timers.Timer(delayMs);
                 _recheckTimer.Elapsed += async (s, e) =>
                 {
                     _recheckTimer?.Stop();
                     AppLogger.Debug("Miner", "[DropsInventoryManager] Re-evaluating streams for active campaigns.");
                     AppLogger.Info("Miner", "Scheduled re-evaluation triggered.");
-                    await StartWatchingStreams(true); // Re-evaluate everything
+                    await StartWatchingStreams(true);
                 };
-
                 _recheckTimer.AutoReset = false;
                 _recheckTimer.Start();
 
                 AppLogger.Debug("Miner", $"[DropsInventoryManager] Next stream re-evaluation in ~{delayMs / 60000:F1} minutes at {nextCheckAt:u}");
                 AppLogger.Info("Miner", $"Next re-evaluation in {delayMs / 1000:F0}s at {nextCheckAt:u}. twitchSelected={_currentTwitchCampaign != null}, kickSelected={_currentKickCampaign != null}");
+
                 MinerStatusChanged?.Invoke(_currentTwitchCampaign != null || _currentKickCampaign != null ? "Mining" : "Idle");
             }
             finally
@@ -1495,7 +1467,7 @@ namespace Core.Managers
                     await await Application.Current.Dispatcher.InvokeAsync(async () =>
                         await KickWebView!.NavigateAsync(directoryUrl));
 
-                    await Task.Delay(1500);  // Again — consider WaitForNetworkIdleAsync if needed
+                    await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if needed
 
                     string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
                         await KickWebView!.ExecuteScriptAsync(getFirstStreamerFromDirectoryJs));
@@ -1630,7 +1602,7 @@ namespace Core.Managers
                     await await Application.Current.Dispatcher.InvokeAsync(async () =>
                         await TwitchWebView!.NavigateAsync(directoryUrl));
 
-                    await Task.Delay(1500);  // Again — consider WaitForNetworkIdleAsync if timing issues occur
+                    await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if timing issues occur
 
                     string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
                         await TwitchWebView!.ExecuteScriptAsync(getFirstStreamerJs));
