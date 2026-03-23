@@ -9,7 +9,8 @@ namespace Core.Models
     /// <param name="Name">The display name of the reward.</param>
     /// <param name="ImageUrl">The URL of the image representing the reward, or null if no image is available.</param>
     /// <param name="RequiredMinutes">The total number of minutes required to earn the reward.</param>
-    /// <param name="ProgressMinutes">The number of minutes of progress accumulated toward earning the reward. Defaults to 0.</param>
+    /// <param name="ProgressMinutes">The number of minutes of progress accumulated toward earning the reward API Based. Defaults to 0.</param>
+    /// <param name="ProgressMinutes">The number of minutes of progress accumulated toward earning the reward Mutable for display. Defaults to 0.</param>
     /// <param name="IsClaimed">true if the reward has been claimed; otherwise, false. Defaults to false.</param>
     /// <param name="DropInstanceId">The identifier of the specific drop instance associated with this reward, or null if not applicable.</param>
     /// <param name="IsCurrentReward">true if this reward is currently being progressed; otherwise, false. Defaults to false.</param>

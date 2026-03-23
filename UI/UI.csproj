@@ -10,10 +10,10 @@
 		<ApplicationIcon>Assets\logo.ico</ApplicationIcon>
 		<AssemblyTitle>Stream Drop Collector</AssemblyTitle>
 		<AssemblyName>Stream Drop Collector</AssemblyName>
-		<Version>1.0.15</Version>
-		<AssemblyVersion>1.0.15.0</AssemblyVersion>
-		<FileVersion>1.0.15</FileVersion>
-		<InformationalVersion>1.0.15</InformationalVersion>
+		<Version>1.0.16</Version>
+		<AssemblyVersion>1.0.16.0</AssemblyVersion>
+		<FileVersion>1.0.16</FileVersion>
+		<InformationalVersion>1.0.16</InformationalVersion>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -47,23 +47,19 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<Compile
-			Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
+		<Compile Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
 		<Compile Remove="Windows\**" />
-		<EmbeddedResource
-			Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
+		<EmbeddedResource Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
 		<EmbeddedResource Remove="Windows\**" />
-		<None
-			Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
+		<None Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
 		<None Remove="Windows\**" />
-		<Page
-			Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
+		<Page Remove="bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\Stream Drop Collector.exe.WebView2\**" />
 		<Page Remove="Windows\**" />
 	</ItemGroup>
 
 	<ItemGroup>
 		<PackageReference Include="Hardcodet.NotifyIcon.Wpf" Version="2.0.1" />
-		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3650.58" />
+		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3856.49" />
 	</ItemGroup>
 
 	<ItemGroup>

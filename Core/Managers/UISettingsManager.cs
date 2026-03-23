@@ -2,6 +2,7 @@
 using Timer = System.Timers.Timer;
 using System.Net.Http.Headers;
 using System.ComponentModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Net.Http;
@@ -17,6 +18,8 @@ namespace Core.Managers
         private static readonly Lazy<UISettingsManager> _instance = new(() => new UISettingsManager());
         public static UISettingsManager Instance => _instance.Value;
         public event PropertyChangedEventHandler? PropertyChanged;
+        public event Action<MiningPriorityMode>? MiningPriorityModeChanged;
+        public event Action<Platform>? GameWhitelistChanged;
         private static readonly string _settingsFilePath = Path.Combine(Environment.ExpandEnvironmentVariables("%APPDATA%"), "Stream Drop Collector", "Settings.json");
         private static readonly JsonSerializerOptions _jsonOptions = new()
         {
@@ -35,6 +38,14 @@ namespace Core.Managers
         private bool _updateAvailable = false;
         private bool _notifyOnNewUpdateAvailable = true;
         private DateTime? _lastUpdateCheck = null;
+        private MiningPriorityMode _miningPriorityMode = MiningPriorityMode.AvailabilityThenProgress;
+        private List<string> _twitchGameWhitelistSlugs = new List<string>();
+        private List<string> _kickGameWhitelistSlugs = new List<string>();
+        private bool _isUpdatingGameFilterOptions;
+        private bool _isLoadingSettings;
+
+        public ObservableCollection<GameFilterOption> TwitchGameFilterOptions { get; } = new ObservableCollection<GameFilterOption>();
+        public ObservableCollection<GameFilterOption> KickGameFilterOptions { get; } = new ObservableCollection<GameFilterOption>();
 
         /// <summary>
         /// Gets or sets a value indicating whether the application starts automatically when Windows starts.
@@ -97,7 +108,7 @@ namespace Core.Managers
 
                 if (value == UpdateFrequency.Never)
                     NotifyOnNewUpdateAvailable = false;
-                else if (UpdateFrequency == UpdateFrequency.OnLaunch)
+                else if (UpdateFrequency == UpdateFrequency.OnLaunch && !_isLoadingSettings)
                     _ = CheckForUpdatesAsync(true);
 
                 OnPropertyChanged(nameof(IsUpdateNotificationEnabled));
@@ -122,6 +133,15 @@ namespace Core.Managers
                     if (!value && NotifyOnAutoClaimed)
                         NotifyOnAutoClaimed = false;
                 }
+            }
+        }
+        public MiningPriorityMode MiningPriorityMode
+        {
+            get => _miningPriorityMode;
+            set
+            {
+                if (SetField(ref _miningPriorityMode, value) && !_isLoadingSettings)
+                    MiningPriorityModeChanged?.Invoke(value);
             }
         }
         /// <summary>
@@ -205,6 +225,17 @@ namespace Core.Managers
         /// Gets a value indicating whether update notifications are enabled.
         /// </summary>
         public bool IsUpdateNotificationEnabled => UpdateFrequency != UpdateFrequency.Never;
+
+        public string TwitchWhitelistSummary => _twitchGameWhitelistSlugs.Count == 0
+            ? "All active Twitch games are allowed"
+            : $"{_twitchGameWhitelistSlugs.Count} Twitch game(s) selected";
+
+        public string KickWhitelistSummary => _kickGameWhitelistSlugs.Count == 0
+            ? "All active Kick games are allowed"
+            : $"{_kickGameWhitelistSlugs.Count} Kick game(s) selected";
+
+        public IReadOnlyList<string> TwitchGameWhitelistSlugs => _twitchGameWhitelistSlugs.AsReadOnly();
+        public IReadOnlyList<string> KickGameWhitelistSlugs => _kickGameWhitelistSlugs.AsReadOnly();
 
         private UISettingsManager()
         {
@@ -315,8 +346,9 @@ namespace Core.Managers
         private void LoadSettings()
         {
             if (!File.Exists(_settingsFilePath))
-                return; // First run — use defaults
+                return; // First run - use defaults
 
+            _isLoadingSettings = true;
             try
             {
                 string json = File.ReadAllText(_settingsFilePath);
@@ -329,17 +361,27 @@ namespace Core.Managers
                     Theme = settings.Theme ?? "System";
                     UpdateFrequency = settings.UpdateFrequency;
                     AutoClaimRewards = settings.AutoClaimRewards;
+                    MiningPriorityMode = settings.MiningPriorityMode;
                     NotifyOnReadyToClaim = settings.NotifyOnReadyToClaim;
                     NotifyOnAutoClaimed = settings.NotifyOnAutoClaimed;
                     VerboseDebugLogging = settings.VerboseDebugLogging;
                     NotifyOnNewUpdateAvailable = settings.NotifyOnNewUpdateAvailable;
                     _lastUpdateCheck = settings.LastUpdateCheck;
+                    _twitchGameWhitelistSlugs = NormalizeWhitelist(settings.TwitchGameWhitelistSlugs);
+                    _kickGameWhitelistSlugs = NormalizeWhitelist(settings.KickGameWhitelistSlugs);
                 }
             }
             catch (Exception ex) when (ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
             {
                 AppLogger.Warn("UISettings", $"LoadSettings failed and defaults are used. {ex.GetType().Name}: {ex.Message}");
             }
+            finally
+            {
+                _isLoadingSettings = false;
+            }
+
+            OnPropertyChanged(nameof(TwitchWhitelistSummary));
+            OnPropertyChanged(nameof(KickWhitelistSummary));
 
             UpdateStartupRegistry();
         }
@@ -362,11 +404,14 @@ namespace Core.Managers
                     Theme = Theme,
                     UpdateFrequency = UpdateFrequency,
                     AutoClaimRewards = AutoClaimRewards,
+                    MiningPriorityMode = MiningPriorityMode,
                     NotifyOnReadyToClaim = NotifyOnReadyToClaim,
                     NotifyOnAutoClaimed = NotifyOnAutoClaimed,
                     VerboseDebugLogging = VerboseDebugLogging,
                     NotifyOnNewUpdateAvailable = NotifyOnNewUpdateAvailable,
-                    LastUpdateCheck = _lastUpdateCheck
+                    LastUpdateCheck = _lastUpdateCheck,
+                    TwitchGameWhitelistSlugs = [.. _twitchGameWhitelistSlugs],
+                    KickGameWhitelistSlugs = [.. _kickGameWhitelistSlugs]
                 };
 
                 string json = JsonSerializer.Serialize(settings, _jsonOptions);
@@ -414,7 +459,8 @@ namespace Core.Managers
                 UpdateStartupRegistry();
 
             // Auto-save whenever a setting changes (lightweight & convenient)
-            Task.Run(SaveSettings); // Fire-and-forget on background thread
+            if (!_isLoadingSettings)
+                Task.Run(SaveSettings); // Fire-and-forget on background thread
 
             return true;
         }
@@ -435,7 +481,7 @@ namespace Core.Managers
             {
                 if (!StartWithWindows)
                 {
-                    // Just remove it — clean and simple
+                    // Just remove it - clean and simple
                     Utility.RemoveFromRegistry(keyName);
                     return;
                 }
@@ -458,6 +504,196 @@ namespace Core.Managers
                 AppLogger.Error("UISettings", "[Startup Registry] Failed", ex);
                 // Optional: show non-blocking toast later if you want
             }
+        }
+
+        public void UpdateAvailableGameFilterOptions(IEnumerable<DropsCampaign> campaigns)
+        {
+            _isUpdatingGameFilterOptions = true;
+            try
+            {
+                List<(Platform platform, string slug, string displayName)> options = campaigns
+                    .Where(c => !string.IsNullOrWhiteSpace(c.Slug))
+                    .Select(c => (c.Platform, c.Slug.Trim().ToLowerInvariant(), c.GameName))
+                    .GroupBy(x => $"{x.Platform}:{x.Item2}", StringComparer.OrdinalIgnoreCase)
+                    .Select(g => g.First())
+                    .OrderBy(x => x.Platform)
+                    .ThenBy(x => x.Item3, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                RebuildOptionsCollection(
+                    TwitchGameFilterOptions,
+                    Platform.Twitch,
+                    options.Where(x => x.platform == Platform.Twitch),
+                    _twitchGameWhitelistSlugs);
+
+                RebuildOptionsCollection(
+                    KickGameFilterOptions,
+                    Platform.Kick,
+                    options.Where(x => x.platform == Platform.Kick),
+                    _kickGameWhitelistSlugs);
+            }
+            finally
+            {
+                _isUpdatingGameFilterOptions = false;
+            }
+
+            OnPropertyChanged(nameof(TwitchWhitelistSummary));
+            OnPropertyChanged(nameof(KickWhitelistSummary));
+        }
+
+        public void ClearGameWhitelist(Platform platform)
+        {
+            if (platform == Platform.Twitch)
+                _twitchGameWhitelistSlugs = new List<string>();
+            else
+                _kickGameWhitelistSlugs = new List<string>();
+
+            ObservableCollection<GameFilterOption> options = platform == Platform.Twitch
+                ? TwitchGameFilterOptions
+                : KickGameFilterOptions;
+
+            _isUpdatingGameFilterOptions = true;
+            try
+            {
+                foreach (GameFilterOption option in options)
+                    option.IsSelected = false;
+
+                List<GameFilterOption> inactiveOptions = options
+                    .Where(x => x.DisplayName.EndsWith(" (inactive)", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                foreach (GameFilterOption option in inactiveOptions)
+                {
+                    option.PropertyChanged -= OnGameFilterOptionPropertyChanged;
+                    options.Remove(option);
+                }
+            }
+            finally
+            {
+                _isUpdatingGameFilterOptions = false;
+            }
+
+            OnPropertyChanged(platform == Platform.Twitch ? nameof(TwitchWhitelistSummary) : nameof(KickWhitelistSummary));
+            Task.Run(SaveSettings);
+            GameWhitelistChanged?.Invoke(platform);
+        }
+
+        public bool IsCampaignAllowedByWhitelist(DropsCampaign campaign)
+        {
+            List<string> whitelist = campaign.Platform == Platform.Twitch
+                ? _twitchGameWhitelistSlugs
+                : _kickGameWhitelistSlugs;
+
+            if (whitelist.Count == 0)
+                return true;
+
+            string slug = campaign.Slug?.Trim().ToLowerInvariant() ?? string.Empty;
+            return whitelist.Contains(slug, StringComparer.OrdinalIgnoreCase);
+        }
+
+        private void RebuildOptionsCollection(
+            ObservableCollection<GameFilterOption> collection,
+            Platform platform,
+            IEnumerable<(Platform platform, string slug, string displayName)> options,
+            List<string> whitelist)
+        {
+            foreach (GameFilterOption existing in collection)
+                existing.PropertyChanged -= OnGameFilterOptionPropertyChanged;
+
+            collection.Clear();
+
+            HashSet<string> seenSlugs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach ((Platform optionPlatform, string slug, string displayName) in options)
+            {
+                GameFilterOption option = new GameFilterOption(
+                    optionPlatform,
+                    slug,
+                    displayName,
+                    whitelist.Contains(slug, StringComparer.OrdinalIgnoreCase));
+
+                option.PropertyChanged += OnGameFilterOptionPropertyChanged;
+                collection.Add(option);
+                seenSlugs.Add(slug);
+            }
+
+            foreach (string slug in whitelist)
+            {
+                if (seenSlugs.Contains(slug))
+                    continue;
+
+                GameFilterOption option = new GameFilterOption(
+                    platform,
+                    slug,
+                    $"{slug} (inactive)",
+                    true);
+
+                option.PropertyChanged += OnGameFilterOptionPropertyChanged;
+                collection.Add(option);
+            }
+        }
+
+        private void OnGameFilterOptionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (_isUpdatingGameFilterOptions)
+                return;
+
+            if (e.PropertyName != nameof(GameFilterOption.IsSelected) || sender is not GameFilterOption option)
+                return;
+
+            List<string> whitelist = option.Platform == Platform.Twitch
+                ? _twitchGameWhitelistSlugs
+                : _kickGameWhitelistSlugs;
+
+            if (option.IsSelected)
+            {
+                if (!whitelist.Contains(option.Slug, StringComparer.OrdinalIgnoreCase))
+                    whitelist.Add(option.Slug);
+            }
+            else
+            {
+                whitelist.RemoveAll(x => string.Equals(x, option.Slug, StringComparison.OrdinalIgnoreCase));
+
+                if (option.DisplayName.EndsWith(" (inactive)", StringComparison.OrdinalIgnoreCase))
+                {
+                    ObservableCollection<GameFilterOption> collection = option.Platform == Platform.Twitch
+                        ? TwitchGameFilterOptions
+                        : KickGameFilterOptions;
+
+                    _isUpdatingGameFilterOptions = true;
+                    try
+                    {
+                        option.PropertyChanged -= OnGameFilterOptionPropertyChanged;
+                        collection.Remove(option);
+                    }
+                    finally
+                    {
+                        _isUpdatingGameFilterOptions = false;
+                    }
+                }
+            }
+
+            if (option.Platform == Platform.Twitch)
+                _twitchGameWhitelistSlugs = NormalizeWhitelist(whitelist);
+            else
+                _kickGameWhitelistSlugs = NormalizeWhitelist(whitelist);
+
+            OnPropertyChanged(option.Platform == Platform.Twitch ? nameof(TwitchWhitelistSummary) : nameof(KickWhitelistSummary));
+            Task.Run(SaveSettings);
+            GameWhitelistChanged?.Invoke(option.Platform);
+        }
+
+        private static List<string> NormalizeWhitelist(IEnumerable<string>? values)
+        {
+            if (values == null)
+                return new List<string>();
+
+            return values
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim().ToLowerInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
     }
 }

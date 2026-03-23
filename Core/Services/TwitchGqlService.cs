@@ -493,7 +493,7 @@ namespace Core.Services
                 .FirstOrDefault(h => h != null);
 
             if (string.IsNullOrEmpty(hash))
-                throw new InvalidOperationException("DropCampaignDetails hash not found — try again");
+                throw new InvalidOperationException("DropCampaignDetails hash not found - try again");
 
             SetCachedHash(operationName, hash);
 

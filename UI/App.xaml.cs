@@ -91,7 +91,7 @@ namespace UI
             }
             catch
             {
-                // Existing instance not ready yet — safe to ignore
+                // Existing instance not ready yet - safe to ignore
             }
         }
 

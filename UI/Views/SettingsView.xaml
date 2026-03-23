@@ -341,7 +341,89 @@
 
                         <CheckBox IsChecked="{Binding AutoClaimRewards, Mode=TwoWay}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Auto-claim rewards when ready"/>
+                                  Content="Auto-claim rewards when ready"
+                                  Margin="0,0,0,12"/>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,0">
+                            <TextBlock Text="Mining priority" Foreground="{DynamicResource TextMutedBrush}"
+                                       Width="140" VerticalAlignment="Center"/>
+                            <ComboBox Width="260"
+                                      Style="{StaticResource NeonFlatComboBoxStyle}"
+                                      SelectedValue="{Binding MiningPriorityMode, Mode=TwoWay}"
+                                      SelectedValuePath="Tag">
+                                <ComboBoxItem Content="Availability + Progress" Tag="{x:Static enums:MiningPriorityMode.AvailabilityThenProgress}"/>
+                                <ComboBoxItem Content="Ending Soonest" Tag="{x:Static enums:MiningPriorityMode.EndingSoonest}"/>
+                                <ComboBoxItem Content="Least Time To Next Reward" Tag="{x:Static enums:MiningPriorityMode.LeastTimeToNextReward}"/>
+                                <ComboBoxItem Content="Highest Completion" Tag="{x:Static enums:MiningPriorityMode.HighestCompletion}"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- GAME FILTERING -->
+                <Border Background="{DynamicResource CardBackgroundBrush}"
+                        CornerRadius="10" Padding="24" Margin="0,0,0,24"
+                        BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+                    <StackPanel>
+                        <TextBlock Text="Game Filtering" Foreground="{DynamicResource TextSecondaryBrush}"
+                                   FontSize="18" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <TextBlock Text="If no games are selected, all games are allowed."
+                                   Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,12"/>
+
+                        <TextBlock Text="Twitch" Foreground="{DynamicResource TextPrimaryBrush}" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <TextBlock Text="{Binding TwitchWhitelistSummary}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,8"/>
+                        <Border Background="{DynamicResource MainBackgroundBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="8"
+                                Margin="0,0,0,6">
+                            <ListBox ItemsSource="{Binding TwitchGameFilterOptions}"
+                                     BorderThickness="0"
+                                     Background="Transparent"
+                                     MaxHeight="140">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Content="{Binding DisplayName}"
+                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                  Style="{StaticResource ModernCheckBoxStyle}"
+                                                  Margin="0,4,0,4"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
+                        <Button Content="Clear Twitch whitelist"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Left"
+                                Click="OnClearTwitchWhitelistClick"
+                                Margin="0,0,0,12"/>
+
+                        <TextBlock Text="Kick" Foreground="{DynamicResource TextPrimaryBrush}" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                        <TextBlock Text="{Binding KickWhitelistSummary}" Foreground="{DynamicResource TextMutedBrush}" Margin="0,0,0,8"/>
+                        <Border Background="{DynamicResource MainBackgroundBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1"
+                                CornerRadius="8"
+                                Padding="8"
+                                Margin="0,0,0,6">
+                            <ListBox ItemsSource="{Binding KickGameFilterOptions}"
+                                     BorderThickness="0"
+                                     Background="Transparent"
+                                     MaxHeight="140">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Content="{Binding DisplayName}"
+                                                  IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                                  Style="{StaticResource ModernCheckBoxStyle}"
+                                                  Margin="0,4,0,4"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
+                        <Button Content="Clear Kick whitelist"
+                                Style="{StaticResource AccentButtonStyle}"
+                                HorizontalAlignment="Left"
+                                Click="OnClearKickWhitelistClick"/>
                     </StackPanel>
                 </Border>
 

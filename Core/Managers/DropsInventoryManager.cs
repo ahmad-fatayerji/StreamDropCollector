@@ -1,11 +1,11 @@
 ﻿using System.Collections.ObjectModel;
+using System.Text.Json;
 using Core.Interfaces;
 using System.Windows;
 using System.Timers;
 using Core.Logging;
 using Core.Models;
 using Core.Enums;
-using System.Text.Json;
 using System.IO;
 
 namespace Core.Managers
@@ -36,6 +36,9 @@ namespace Core.Managers
         private int _twitchDropWatchedSeconds;
         private int _kickDropWatchedSeconds;
 
+        private bool _lastKnownKickOnlineState;
+        private bool _lastKnownTwitchOnlineState;
+
         // Timer for live ticking
         private readonly System.Timers.Timer _liveProgressTimer = new(1000);
         private System.Timers.Timer? _recheckTimer;
@@ -50,6 +53,8 @@ namespace Core.Managers
         private readonly object _lastStreamerSync = new();
         private readonly Dictionary<string, string> _lastTwitchStreamers = new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, string> _lastKickStreamers = new(StringComparer.OrdinalIgnoreCase);
+        private readonly object _campaignSnapshotSync = new();
+        private List<DropsCampaign> _lastKnownCampaigns = new();
 
         private static readonly string _lastWatchedStreamersFilePath = Path.Combine(
             Environment.ExpandEnvironmentVariables("%APPDATA%"),
@@ -58,20 +63,185 @@ namespace Core.Managers
 
         private static bool IsVerboseDebugEnabled => UISettingsManager.Instance.VerboseDebugLogging;
 
+        /// <summary>
+        /// Logs a message at the informational level if verbose debug logging is enabled.
+        /// </summary>
+        /// <param name="scope">The logical scope or category associated with the log message. Used to group related log entries.</param>
+        /// <param name="message">The message to log. Should provide relevant information about the operation or event.</param>
         private static void VerboseLog(string scope, string message)
         {
             if (IsVerboseDebugEnabled)
                 AppLogger.Info(scope, message);
         }
 
+        /// <summary>
+        /// Initializes a new instance of the DropsInventoryManager class.
+        /// </summary>
+        /// <remarks>This constructor is private to enforce the singleton pattern. It sets up event
+        /// handlers and initializes internal state required for managing drops inventory. Instances of this class can
+        /// only be created internally within the class.</remarks>
         private DropsInventoryManager()
         {
             LoadLastWatchedStreamers();
+            UISettingsManager.Instance.MiningPriorityModeChanged += OnMiningPriorityModeChanged;
+            UISettingsManager.Instance.GameWhitelistChanged += OnGameWhitelistChanged;
 
             _liveProgressTimer.Elapsed += OnLiveProgressTick;
             _liveProgressTimer.AutoReset = true;
         }
 
+        /// <summary>
+        /// Handles changes to the mining priority mode by applying the specified mode.
+        /// </summary>
+        /// <param name="mode">The new mining priority mode to apply.</param>
+        private void OnMiningPriorityModeChanged(MiningPriorityMode mode)
+        {
+            _ = ApplyMiningPriorityModeChangeAsync(mode);
+        }
+        /// <summary>
+        /// Handles changes to the game whitelist for the specified platform.
+        /// </summary>
+        /// <param name="platform">The platform for which the game whitelist has changed.</param>
+        private void OnGameWhitelistChanged(Platform platform)
+        {
+            _ = ApplyGameWhitelistChangeAsync(platform);
+        }
+        /// <summary>
+        /// Applies a change to the mining priority mode and triggers an immediate re-evaluation of active campaigns if
+        /// applicable.
+        /// </summary>
+        /// <remarks>If the miner is paused, there are no active campaigns, or no webviews are
+        /// initialized, the re-evaluation is skipped. Logging is performed to indicate the outcome of the
+        /// operation.</remarks>
+        /// <param name="mode">The new mining priority mode to apply. Determines how mining resources are prioritized during stream
+        /// evaluation.</param>
+        /// <returns>A task that represents the asynchronous operation.</returns>
+        private async Task ApplyMiningPriorityModeChangeAsync(MiningPriorityMode mode)
+        {
+            try
+            {
+                AppLogger.Info("Miner", $"Mining priority mode changed to {mode}. Triggering immediate re-evaluation.");
+
+                if (_isPaused)
+                {
+                    AppLogger.Warn("Miner", "Priority mode changed while miner is paused; re-evaluation skipped.");
+                    return;
+                }
+
+                if (!ActiveCampaigns.Any())
+                {
+                    AppLogger.Warn("Miner", "Priority mode changed but there are no active campaigns; re-evaluation skipped.");
+                    return;
+                }
+
+                if (TwitchWebView == null && KickWebView == null)
+                {
+                    AppLogger.Warn("Miner", "Priority mode changed but no webviews are initialized; re-evaluation skipped.");
+                    return;
+                }
+
+                AppLogger.Debug("Miner", $"Immediate re-evaluation starting after priority mode change. activeCampaigns={ActiveCampaigns.Count}");
+                await StartWatchingStreams(true);
+                AppLogger.Info("Miner", "Immediate re-evaluation completed after priority mode change.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Miner", "Failed to apply mining priority mode change immediately.", ex);
+            }
+        }
+        /// <summary>
+        /// Applies changes to the game whitelist for the specified platform and triggers an immediate re-evaluation of
+        /// active campaigns if appropriate.
+        /// </summary>
+        /// <remarks>Re-evaluation is skipped if the miner is paused, if there are no active campaigns
+        /// after filtering, or if no webviews are initialized. Logging is performed to provide information about the
+        /// operation's progress and any conditions that prevent re-evaluation.</remarks>
+        /// <param name="platform">The platform for which the game whitelist has changed. Determines which set of campaigns and streams are
+        /// affected by the update.</param>
+        /// <returns>A task that represents the asynchronous operation of applying the whitelist change and re-evaluating active
+        /// campaigns.</returns>
+        private async Task ApplyGameWhitelistChangeAsync(Platform platform)
+        {
+            try
+            {
+                AppLogger.Info("Miner", $"{platform} game whitelist changed. Triggering immediate re-evaluation.");
+
+                RefreshActiveCampaignsFromLatestSnapshot();
+
+                if (_isPaused)
+                {
+                    AppLogger.Warn("Miner", "Whitelist changed while miner is paused; re-evaluation skipped.");
+                    return;
+                }
+
+                if (!ActiveCampaigns.Any())
+                {
+                    AppLogger.Warn("Miner", "Whitelist changed but there are no active campaigns after filtering; re-evaluation skipped.");
+                    return;
+                }
+
+                if (TwitchWebView == null && KickWebView == null)
+                {
+                    AppLogger.Warn("Miner", "Whitelist changed but no webviews are initialized; re-evaluation skipped.");
+                    return;
+                }
+
+                AppLogger.Debug("Miner", $"Immediate re-evaluation starting after whitelist change. activeCampaigns={ActiveCampaigns.Count}");
+                await StartWatchingStreams(true);
+                AppLogger.Info("Miner", "Immediate re-evaluation completed after whitelist change.");
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Miner", "Failed to apply game whitelist change immediately.", ex);
+            }
+        }
+        /// <summary>
+        /// Refreshes the list of active campaigns using the most recent campaign snapshot and updates the UI
+        /// accordingly.
+        /// </summary>
+        /// <remarks>This method synchronizes the active campaigns with the latest known snapshot and
+        /// applies UI filters to determine which campaigns are displayed. It must be called on the UI thread, as it
+        /// updates UI-bound collections and settings.</remarks>
+        private void RefreshActiveCampaignsFromLatestSnapshot()
+        {
+            List<DropsCampaign> snapshot;
+            lock (_campaignSnapshotSync)
+            {
+                snapshot = [.. _lastKnownCampaigns];
+            }
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                List<DropsCampaign> sourceCampaigns = snapshot.Count != 0
+                    ? snapshot
+                    : [.. ActiveCampaigns];
+
+                UISettingsManager.Instance.UpdateAvailableGameFilterOptions(sourceCampaigns);
+
+                List<DropsCampaign> filteredCampaigns = sourceCampaigns
+                    .Where(c => UISettingsManager.Instance.IsCampaignAllowedByWhitelist(c))
+                    .Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now)
+                    .OrderBy(x => x.Platform).ThenBy(x => x.GameName)
+                    .ToList();
+
+                ActiveCampaigns.Clear();
+                foreach (DropsCampaign campaign in filteredCampaigns)
+                    ActiveCampaigns.Add(campaign);
+
+                UpdateCurrentSelectionFlags();
+            });
+        }
+        /// <summary>
+        /// Applies the specified number of minutes of progress to the active campaign for the given platform and
+        /// campaign identifier.
+        /// </summary>
+        /// <remarks>If the specified campaign is not found or has no progress to make, no changes are
+        /// applied. The method updates the progress for all rewards in the campaign and synchronizes the current
+        /// campaign selection if applicable. This method must be called from the UI thread, as it updates UI-bound
+        /// collections.</remarks>
+        /// <param name="platform">The platform on which the campaign is active. Determines which campaign collection to update.</param>
+        /// <param name="campaignId">The unique identifier of the campaign to which progress will be applied.</param>
+        /// <param name="minutesToAdd">The number of minutes to add to the campaign's progress. Must be greater than zero.</param>
         private void ApplyMinuteProgressToActiveCampaign(Platform platform, string campaignId, int minutesToAdd)
         {
             if (minutesToAdd <= 0)
@@ -180,11 +350,23 @@ namespace Core.Managers
         public void UpdateCampaigns(IEnumerable<DropsCampaign> campaigns, IGqlService? twitchGqlService, bool startWatching = true)
         {
             _twitchGqlService = twitchGqlService;
+            List<DropsCampaign> allCampaigns = campaigns.ToList();
+
+            lock (_campaignSnapshotSync)
+            {
+                _lastKnownCampaigns = [.. allCampaigns];
+            }
 
             Application.Current.Dispatcher.Invoke(() =>
             {
+                UISettingsManager.Instance.UpdateAvailableGameFilterOptions(allCampaigns);
+
+                List<DropsCampaign> filteredCampaigns = allCampaigns
+                    .Where(c => UISettingsManager.Instance.IsCampaignAllowedByWhitelist(c))
+                    .ToList();
+
                 ActiveCampaigns.Clear();
-                foreach (DropsCampaign? c in campaigns.Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now).OrderBy(x => x.GameName))
+                foreach (DropsCampaign? c in filteredCampaigns.Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now).OrderBy(x => x.Platform).ThenBy(x => x.GameName))
                 {
                     ActiveCampaigns.Add(c);
                 }
@@ -313,6 +495,13 @@ namespace Core.Managers
             await _startWatchingLock.WaitAsync();
             try
             {
+                VerboseLog("StartWatching",
+                    $"ENTERING StartWatchingStreams | restarted={restartedInternally} | " +
+                    $"paused={_isPaused} | activeCampaigns={ActiveCampaigns.Count} | " +
+                    $"twitchCurrent={_currentTwitchCampaign?.Id ?? "null"} | " +
+                    $"kickCurrent={_currentKickCampaign?.Id ?? "null"} | " +
+                    $"twitchSeconds={_twitchWatchedSeconds} | twitchApplied={_twitchAppliedMinuteBucket}");
+
                 if (_isPaused)
                     return;
 
@@ -320,18 +509,22 @@ namespace Core.Managers
                 _startWatchingCts = new CancellationTokenSource();
                 CancellationToken token = _startWatchingCts.Token;
 
+                // Immediately stop the live progress timer to prevent ticks during unstable state
+                _liveProgressTimer?.Stop();
+
                 // Reset current selections and progress
                 TwitchChannelChanged?.Invoke(string.Empty);
                 TwitchProgressChanged?.Invoke(0, 0);
-
                 KickChannelChanged?.Invoke(string.Empty);
                 KickProgressChanged?.Invoke(0, 0);
-
                 _twitchAppliedMinuteBucket = 0;
                 _kickAppliedMinuteBucket = 0;
 
+                VerboseLog("StartWatching", $"AFTER reset | twitchApplied={_twitchAppliedMinuteBucket} | kickApplied={_kickAppliedMinuteBucket}");
+
                 AppLogger.Debug("Miner", "[DropsInventoryManager] Starting stream watching process...");
                 AppLogger.Info("Miner", $"StartWatchingStreams invoked. restartedInternally={restartedInternally}, activeCampaigns={ActiveCampaigns.Count}, paused={_isPaused}");
+
                 if (!restartedInternally)
                     MinerStatusChanged?.Invoke("Starting");
                 else
@@ -342,7 +535,6 @@ namespace Core.Managers
                 _streamHealthTimer?.Stop();
                 _recheckTimer?.Dispose();
                 _streamHealthTimer?.Dispose();
-
                 _recheckTimer = null;
                 _streamHealthTimer = null;
 
@@ -362,17 +554,14 @@ namespace Core.Managers
 
                 DateTime nextCheckAt = DateTime.Now.AddHours(1); // Fallback: recheck in 1 hour
 
-                // Get a list of ready to claim rewards, this means the reward is unclaimed and progress >= required
+                // Get a list of ready to claim rewards
                 List<DropsReward> readyToClaimRewards = [.. ActiveCampaigns.SelectMany(c => c.Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes >= r.RequiredMinutes))];
 
                 if (UISettingsManager.Instance.AutoClaimRewards)
                 {
-                    // Claim all ready rewards
                     foreach (DropsReward item in readyToClaimRewards)
                     {
                         DropsCampaign? parentCampaign = ActiveCampaigns.FirstOrDefault(c => c.Rewards.Contains(item));
-
-                        // If Twitch, use Gql.ClaimDropAsync()
                         if (parentCampaign == null)
                             continue;
 
@@ -406,11 +595,9 @@ namespace Core.Managers
                 }
                 else if (UISettingsManager.Instance.NotifyOnReadyToClaim)
                 {
-                    // Notify user that there are rewards ready to claim
                     NotificationManager.ShowNotification("Drop Ready to Claim", $"You have {readyToClaimRewards.Count} drops rewards ready to claim. Please claim them manually.");
                 }
 
-                // If nothing left to progress after claiming, stop and reset
                 if (!ActiveCampaigns.Any(c => c.HasProgressToMake()))
                 {
                     AppLogger.Debug("Miner", "[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
@@ -418,7 +605,6 @@ namespace Core.Managers
                     MinerStatusChanged?.Invoke("Idle");
                     _currentTwitchCampaign = null;
                     _currentKickCampaign = null;
-                    _liveProgressTimer.Stop();
                     UpdateCurrentSelectionFlags();
                     return;
                 }
@@ -430,18 +616,18 @@ namespace Core.Managers
                 List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
                 List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
 
-                // Handle Twitch
+                // ────────────────────────────────────────────────────────────────
+                // Twitch handling
+                // ────────────────────────────────────────────────────────────────
                 if (twitchCampaigns.Count != 0 && TwitchWebView != null)
                 {
                     if (token.IsCancellationRequested)
                         return;
 
                     List<DropsCampaign> remainingTwitchCampaigns = [.. twitchCampaigns];
-
                     while (remainingTwitchCampaigns.Count != 0)
                     {
                         DropsCampaign? bestTwitch = await SelectBestCampaign(remainingTwitchCampaigns);
-
                         if (bestTwitch == null)
                             break;
 
@@ -449,7 +635,6 @@ namespace Core.Managers
                             return;
 
                         string twitchUrl = await SelectTwitchStreamerForCampaign(bestTwitch);
-
                         if (token.IsCancellationRequested)
                             return;
 
@@ -462,18 +647,12 @@ namespace Core.Managers
 
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(twitchUrl));
                         await Task.Delay(1500);
-
-                        // Dismiss mature content gate if present
                         await DismissTwitchMatureContentGateAsync();
-
-                        // Set stream to lowest quality
                         await SetTwitchStreamToLowestQualityAsync();
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ForceRefreshAsync());
-
                         await Task.Delay(5000);
 
                         _currentTwitchCampaign = bestTwitch;
-
                         bool twitchOnline = await IsTwitchStreamOnline();
                         bool twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
 
@@ -486,14 +665,14 @@ namespace Core.Managers
                             continue;
                         }
 
+                        _lastKnownTwitchOnlineState = true;
                         UpdateCurrentSelectionFlags();
 
-                        // Campaign progress baseline uses all unclaimed rewards.
+                        // Sync baseline NOW - right after selection, before any further logic
                         _twitchWatchedSeconds = bestTwitch.Rewards
                             .Where(r => !r.IsClaimed)
                             .Sum(r => r.ProgressMinutes * 60);
 
-                        // Reward progress baseline uses the next reward only.
                         DropsReward? nextTwitchReward = bestTwitch.Rewards
                             .Where(r => !r.IsClaimed)
                             .OrderBy(r => r.RequiredMinutes)
@@ -501,6 +680,13 @@ namespace Core.Managers
 
                         _twitchDropWatchedSeconds = nextTwitchReward?.ProgressMinutes * 60 ?? 0;
                         _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
+
+                        VerboseLog("SelectionBaseline",
+                            $"Twitch baseline SET | " +
+                            $"campaignId={bestTwitch.Id} | " +
+                            $"watchedSeconds={_twitchWatchedSeconds} | " +
+                            $"dropWatchedSeconds={_twitchDropWatchedSeconds} | " +
+                            $"appliedBucket={_twitchAppliedMinuteBucket}");
 
                         VerboseLog("SelectionBaseline", $"Twitch campaignId={bestTwitch.Id}, campaignWatchedSecondsBaseline={_twitchWatchedSeconds}, dropWatchedSecondsBaseline={_twitchDropWatchedSeconds}, nextRewardId={nextTwitchReward?.Id ?? "none"}, unclaimedRewards={bestTwitch.Rewards.Count(r => !r.IsClaimed)}");
 
@@ -514,13 +700,12 @@ namespace Core.Managers
 
                         DropsReward? soonestTwitch = bestTwitch.Rewards
                             .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
-                            .OrderBy(r => (r.RequiredMinutes - r.ProgressMinutes))
+                            .OrderBy(r => r.RequiredMinutes - r.ProgressMinutes)
                             .FirstOrDefault();
 
                         if (soonestTwitch != null)
                         {
                             DateTime est = DateTime.Now.AddMinutes(soonestTwitch.RequiredMinutes - soonestTwitch.ProgressMinutes);
-
                             if (est < nextCheckAt)
                                 nextCheckAt = est;
                         }
@@ -534,18 +719,18 @@ namespace Core.Managers
                     }
                 }
 
-                // Handle Kick
+                // ────────────────────────────────────────────────────────────────
+                // Kick handling
+                // ────────────────────────────────────────────────────────────────
                 if (kickCampaigns.Count != 0 && KickWebView != null)
                 {
                     if (token.IsCancellationRequested)
                         return;
 
                     List<DropsCampaign> remainingKickCampaigns = [.. kickCampaigns];
-
                     while (remainingKickCampaigns.Count != 0)
                     {
                         DropsCampaign? bestKick = await SelectBestCampaign(remainingKickCampaigns);
-
                         if (bestKick == null)
                             break;
 
@@ -553,7 +738,6 @@ namespace Core.Managers
                             return;
 
                         string kickUrl = await SelectKickStreamerForCampaign(bestKick);
-
                         if (token.IsCancellationRequested)
                             return;
 
@@ -566,18 +750,12 @@ namespace Core.Managers
 
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(kickUrl));
                         await Task.Delay(1500);
-
-                        // Dismiss mature content gate if present
                         await DismissKickMatureContentGateAsync();
-
-                        // Set stream to lowest quality
                         await SetKickStreamToLowestQualityAsync();
                         await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ForceRefreshAsync());
-
                         await Task.Delay(5000);
 
                         _currentKickCampaign = bestKick;
-
                         bool kickOnline = await IsKickStreamOnline();
                         bool kickCorrectCategory = await IsKickStreamCategoryCorrect();
 
@@ -590,7 +768,9 @@ namespace Core.Managers
                             continue;
                         }
 
+                        _lastKnownKickOnlineState = true;
                         UpdateCurrentSelectionFlags();
+
                         _kickWatchedSeconds = bestKick.Rewards
                             .Where(r => !r.IsClaimed)
                             .Sum(r => r.ProgressMinutes * 60);
@@ -621,7 +801,6 @@ namespace Core.Managers
                         if (soonestKick != null)
                         {
                             DateTime est = DateTime.Now.AddMinutes(soonestKick.RequiredMinutes - soonestKick.ProgressMinutes);
-
                             if (est < nextCheckAt)
                                 nextCheckAt = est;
                         }
@@ -640,27 +819,28 @@ namespace Core.Managers
                     AppLogger.Warn("Miner", "No stream selected after evaluation cycle; status may oscillate with health checks.");
                 }
 
-                // Start periodic health check (every 60 seconds)
+                // Start periodic health check
                 StartStreamHealthMonitoring();
-                _liveProgressTimer.Start();
+
+                // ONLY NOW restart the live progress timer - state is consistent
+                _liveProgressTimer?.Start();
 
                 // Set timer to re-evaluate when the next reward is expected to complete (or fallback)
-                double delayMs = Math.Max((nextCheckAt - DateTime.Now).TotalMilliseconds, 60000); // At least 1 min
-
+                double delayMs = Math.Max((nextCheckAt - DateTime.Now).TotalMilliseconds, 60000);
                 _recheckTimer = new System.Timers.Timer(delayMs);
                 _recheckTimer.Elapsed += async (s, e) =>
                 {
                     _recheckTimer?.Stop();
                     AppLogger.Debug("Miner", "[DropsInventoryManager] Re-evaluating streams for active campaigns.");
                     AppLogger.Info("Miner", "Scheduled re-evaluation triggered.");
-                    await StartWatchingStreams(true); // Re-evaluate everything
+                    await StartWatchingStreams(true);
                 };
-
                 _recheckTimer.AutoReset = false;
                 _recheckTimer.Start();
 
                 AppLogger.Debug("Miner", $"[DropsInventoryManager] Next stream re-evaluation in ~{delayMs / 60000:F1} minutes at {nextCheckAt:u}");
                 AppLogger.Info("Miner", $"Next re-evaluation in {delayMs / 1000:F0}s at {nextCheckAt:u}. twitchSelected={_currentTwitchCampaign != null}, kickSelected={_currentKickCampaign != null}");
+
                 MinerStatusChanged?.Invoke(_currentTwitchCampaign != null || _currentKickCampaign != null ? "Mining" : "Idle");
             }
             finally
@@ -773,7 +953,7 @@ namespace Core.Managers
                 }
 
                 ActiveCampaigns.Clear();
-                foreach (DropsCampaign? c in updatedCampaigns.OrderBy(x => x.GameName))
+                foreach (DropsCampaign? c in updatedCampaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))
                 {
                     ActiveCampaigns.Add(c);
                 }
@@ -781,12 +961,12 @@ namespace Core.Managers
         }
         /// <summary>
         /// Begins periodic monitoring of the health status of the Twitch and Kick streams, triggering a re-evaluation
-        /// if either stream is detected as offline.
+        /// if either stream is detected as unhealthy.
         /// </summary>
         /// <remarks>This method sets up a timer to check the online status of both streams every 30
-        /// seconds. If either stream is offline, monitoring is temporarily stopped and an immediate re-selection of
-        /// streams is initiated. This helps ensure that the application responds promptly to changes in stream
-        /// availability.</remarks>
+        /// seconds. If either stream is offline, in the wrong category, or Twitch is showing an ad, monitoring is
+        /// temporarily stopped and an immediate re-selection of streams is initiated. This helps ensure that the
+        /// application responds promptly to changes in stream availability.</remarks>
         private void StartStreamHealthMonitoring()
         {
             _streamHealthTimer = new System.Timers.Timer(30 * 1000); // Every 30 seconds
@@ -797,22 +977,37 @@ namespace Core.Managers
                 {
                     bool twitchOnline = _currentTwitchCampaign != null && await IsTwitchStreamOnline();
                     bool twitchCorrectCategory = _currentTwitchCampaign != null && await IsTwitchStreamCategoryCorrect();
+                    bool twitchShowingAd = _currentTwitchCampaign != null && await IsTwitchShowingAd();
                     bool kickOnline = _currentKickCampaign != null && await IsKickStreamOnline();
                     bool kickCorrectCategory = _currentKickCampaign != null && await IsKickStreamCategoryCorrect();
 
                     AppLogger.Debug("HealthCheck", $"[Health Check] Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
-                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory}");
-                    AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
+                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory} | Twitch showing ad: {twitchShowingAd}");
+                    AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}, showingAd={twitchShowingAd}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
 
                     // Group campaigns by platform
                     List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
                     List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
 
-                    if (twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory)
-                     || kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory))
+                    bool twitchNeedsReevaluation = twitchCampaigns.Count != 0 && (!twitchOnline || !twitchCorrectCategory || twitchShowingAd) && _lastKnownTwitchOnlineState;
+                    bool kickNeedsReevaluation = kickCampaigns.Count != 0 && (!kickOnline || !kickCorrectCategory) && _lastKnownKickOnlineState;
+
+                    if (twitchNeedsReevaluation || kickNeedsReevaluation)
                     {
-                        AppLogger.Debug("HealthCheck", "[Health Check] One or both streams offline -> forcing re-evaluation");
-                        AppLogger.Warn("HealthCheck", "Forcing re-evaluation due to stream health/category mismatch.");
+                        if (twitchShowingAd && !string.IsNullOrWhiteSpace(_currentTwitchCampaign?.Slug))
+                        {
+                            ForgetLastStreamerUrl(Platform.Twitch, _currentTwitchCampaign!.Slug);
+                            AppLogger.Warn("HealthCheck", $"Twitch ad detected for campaign '{_currentTwitchCampaign.Name}'. Forgetting remembered streamer to force a switch.");
+                        }
+
+                        if (!twitchOnline)
+                            _lastKnownTwitchOnlineState = false;
+
+                        if (!kickOnline)
+                            _lastKnownKickOnlineState = false;
+
+                        AppLogger.Debug("HealthCheck", "[Health Check] Stream unhealthy -> forcing re-evaluation");
+                        AppLogger.Warn("HealthCheck", $"Forcing re-evaluation. twitchOnline={twitchOnline}, twitchCategoryOk={twitchCorrectCategory}, twitchAd={twitchShowingAd}, kickOnline={kickOnline}, kickCategoryOk={kickCorrectCategory}");
                         _streamHealthTimer?.Stop();
                         await StartWatchingStreams(true); // This will restart everything safely
                     }
@@ -834,17 +1029,44 @@ namespace Core.Managers
         /// percentage, the campaign closest to earning its next unclaimed reward is selected.</returns>
         private Task<DropsCampaign?> SelectBestCampaign(List<DropsCampaign> campaigns)
         {
-            List<DropsCampaign> prioritizedCampaigns = [.. campaigns
-                // 1) Non-general drops first (false), then general drops (true)
-                .OrderBy(c => c.IsGeneralDrop)
+            MiningPriorityMode mode = UISettingsManager.Instance.MiningPriorityMode;
+            AppLogger.Debug("Selection", $"Selecting best campaign with mode={mode}, candidates={campaigns.Count}");
+            List<DropsCampaign> prioritizedCampaigns = mode switch
+            {
+                MiningPriorityMode.EndingSoonest => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenBy(c => c.EndsAt)
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))],
+                MiningPriorityMode.LeastTimeToNextReward => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))
+                        .ThenByDescending(c => c.CompletionPercentage())],
+                MiningPriorityMode.HighestCompletion => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenByDescending(c => c.CompletionPercentage())
+                        .ThenBy(c => c.EndsAt)
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))],
+                _ => [.. campaigns
+                        .OrderBy(c => c.IsGeneralDrop)
+                        .ThenByDescending(c => c.CompletionPercentage())
+                        .ThenBy(c => c.Rewards
+                            .Where(r => !r.IsClaimed)
+                            .Min(r => r.RequiredMinutes - r.ProgressMinutes))],
+            };
 
-                // 2) highest completion % -> then soonest to complete next reward
-                .ThenByDescending(c => c.CompletionPercentage())
-                .ThenBy(c => c.Rewards
-                    .Where(r => !r.IsClaimed)
-                    .Min(r => r.RequiredMinutes - r.ProgressMinutes))];
+            DropsCampaign? selected = prioritizedCampaigns.FirstOrDefault();
+            if (selected == null)
+                AppLogger.Warn("Selection", "No campaign selected after priority sort.");
+            else
+                AppLogger.Info("Selection", $"Selected campaign '{selected.Name}' ({selected.Id}) with mode={mode}.");
 
-            return Task.FromResult(prioritizedCampaigns.FirstOrDefault());
+            return Task.FromResult(selected);
         }
         /// <summary>
         /// Attempts to set the Kick stream playback quality to the lowest available option asynchronously.
@@ -1025,16 +1247,12 @@ namespace Core.Managers
             string js = @"
                 (() => {
                     const categoryElement = document.querySelector("".text-primary-base"");
-                    const category = categoryElement ? categoryElement.innerText.trim() : '';
-                    return category;
+                    return categoryElement ? categoryElement.href.trim() : '';
                 })();
                 ";
 
             string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView.ExecuteScriptAsync(js));
-            bool isCorrect = rawResult?
-                .Trim()
-                .Trim('"')
-                .Contains(_currentKickCampaign?.Slug ?? "", StringComparison.OrdinalIgnoreCase) ?? false;
+            bool isCorrect = KickCategoryHrefMatchesCampaign(rawResult, _currentKickCampaign?.Slug);
 
             AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Kick stream category correct status: {isCorrect}");
             return isCorrect;
@@ -1068,6 +1286,43 @@ namespace Core.Managers
 
             AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Twitch stream online status: {isOnline}");
             return isOnline;
+        }
+        /// <summary>
+        /// Determines asynchronously whether a Twitch advertisement is currently being displayed in the embedded web
+        /// view.
+        /// </summary>
+        /// <remarks>This method checks for the presence of known Twitch ad indicators in the web view's
+        /// DOM. It returns <see langword="false"/> if the web view is not available.</remarks>
+        /// <returns>A task that represents the asynchronous operation. The task result is <see langword="true"/> if a Twitch ad
+        /// is detected; otherwise, <see langword="false"/>.</returns>
+        private async Task<bool> IsTwitchShowingAd()
+        {
+            if (TwitchWebView == null)
+                return false;
+
+            string js = @"
+                (() => {
+                    const adSelectors = [
+                    '[data-a-target=""video-ad-countdown""]',
+                    '[data-a-target=""video-ad-label""]',
+                    '[data-test-selector=""ad-banner-default-text""]'
+                  ];
+
+                  // Check if ANY of these elements exist in the document
+                  return adSelectors.some(selector => 
+                    document.querySelector(selector) !== null
+                  );
+                })();
+            ";
+
+            string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView.ExecuteScriptAsync(js));
+            bool isAdShowing = rawResult?
+                .Trim()
+                .Trim('"')
+                .Equals("true", StringComparison.OrdinalIgnoreCase) ?? false;
+
+            AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Twitch showing ad status: {isAdShowing}");
+            return isAdShowing;
         }
         /// <summary>
         /// Determines whether the current Twitch stream category matches the expected category for the active campaign.
@@ -1112,21 +1367,16 @@ namespace Core.Managers
         private async Task<string> SelectKickStreamerForCampaign(DropsCampaign campaign)
         {
             string streamerUrl = string.Empty;
-
-            if (TryGetLastStreamerUrl(Platform.Kick, campaign.Slug, out string? rememberedKickUrl))
-            {
-                AppLogger.Info("KickSelection", $"Trying remembered Kick streamer for campaign '{campaign.Name}': {rememberedKickUrl}");
-                return rememberedKickUrl!;
-            }
+            TryGetLastStreamerUrl(Platform.Kick, campaign.Slug, out string? rememberedKickUrl);
 
             string getStreamerCategoryJs = @"
                 (() => {
                     const categoryElement = document.querySelector("".text-primary-base"");
-                    return categoryElement ? categoryElement.innerText.trim() : '';
+                    return categoryElement ? categoryElement.href.trim() : '';
                 })();
             ";
 
-            string js = $@"
+            string getFirstStreamerFromDirectoryJs = $@"
                 (() => {{
                     const titles = document.querySelectorAll('h3.text-base.font-bold.leading-5');
                     if (titles.length === 0) return '';
@@ -1144,19 +1394,36 @@ namespace Core.Managers
                     const link = firstCard.querySelector('a');
                     return link ? link.href.trim() : '';
                 }})();
-            ";
+            "; 
+
             if (!campaign.IsGeneralDrop)
             {
-                foreach (string connectUrl in campaign.ConnectUrls)
+                // NON-GENERAL DROPS
+                IEnumerable<string> orderedConnectUrls = campaign.ConnectUrls;
+                if (!string.IsNullOrWhiteSpace(rememberedKickUrl))
+                {
+                    orderedConnectUrls = new[] { rememberedKickUrl! }
+                        .Concat(campaign.ConnectUrls)
+                        .Distinct(StringComparer.OrdinalIgnoreCase);
+                }
+
+                foreach (string connectUrl in orderedConnectUrls)
                 {
                     await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(connectUrl));
                     await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.WaitForNetworkIdleAsync(5000, 500));
 
                     string categoryResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ExecuteScriptAsync(getStreamerCategoryJs));
 
-                    if (categoryResult.Contains(campaign.Slug, StringComparison.OrdinalIgnoreCase))
+                    if (KickCategoryHrefMatchesCampaign(categoryResult, campaign.Slug))
                     {
                         streamerUrl = connectUrl;
+
+                        if (!string.IsNullOrWhiteSpace(rememberedKickUrl) &&
+                            string.Equals(connectUrl, rememberedKickUrl, StringComparison.OrdinalIgnoreCase))
+                        {
+                            AppLogger.Info("KickSelection", $"Remembered Kick streamer accepted for campaign '{campaign.Name}': {connectUrl}");
+                        }
+
                         break;
                     }
 
@@ -1165,15 +1432,69 @@ namespace Core.Managers
             }
             else
             {
-                await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(campaign.ConnectUrls[0]));
-                await Task.Delay(1500);
+                // Step 1: Try remembered URL if available (validate category!)
+                if (!string.IsNullOrWhiteSpace(rememberedKickUrl))
+                {
+                    AppLogger.Info("KickSelection", $"Trying remembered Kick streamer for general campaign '{campaign.Name}': {rememberedKickUrl}");
 
-                string rawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ExecuteScriptAsync(js));
-                streamerUrl = rawResult?.Trim().Trim('"') ?? "";
+                    await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await KickWebView!.NavigateAsync(rememberedKickUrl));
+
+                    await Task.Delay(1500);  // Consider → WaitForNetworkIdleAsync(5000, 500) for better sync
+
+                    string categoryResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await KickWebView!.ExecuteScriptAsync(getStreamerCategoryJs));
+
+                    if (KickCategoryHrefMatchesCampaign(categoryResult, campaign.Slug))
+                    {
+                        AppLogger.Info("KickSelection", $"Remembered streamer still matches category for general campaign '{campaign.Name}': {rememberedKickUrl}");
+                        streamerUrl = rememberedKickUrl!;
+                    }
+                    else
+                    {
+                        AppLogger.Warn("KickSelection", $"Remembered URL no longer matches category for general '{campaign.Name}': {rememberedKickUrl} | found: '{categoryResult}'");
+                        // fall through to directory fallback
+                    }
+                }
+
+                // Step 2: If no valid remembered → navigate category directory → extract first streamer via your JS
+                if (string.IsNullOrWhiteSpace(streamerUrl) && campaign.ConnectUrls?.Any() == true)
+                {
+                    string directoryUrl = campaign.ConnectUrls[0];  // category page with live list
+
+                    AppLogger.Info("KickSelection", $"Falling back to category directory for general campaign '{campaign.Name}': {directoryUrl}");
+
+                    await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await KickWebView!.NavigateAsync(directoryUrl));
+
+                    await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if needed
+
+                    string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await KickWebView!.ExecuteScriptAsync(getFirstStreamerFromDirectoryJs));
+
+                    streamerUrl = firstStreamerRawResult?.Trim().Trim('"') ?? string.Empty;
+
+                    if (!string.IsNullOrWhiteSpace(streamerUrl))
+                    {
+                        AppLogger.Info("KickSelection", $"Selected first live streamer from directory for '{campaign.Name}': {streamerUrl}");
+                    }
+                    else
+                    {
+                        AppLogger.Warn("KickSelection", $"Failed to extract any first streamer from directory '{directoryUrl}' for general campaign '{campaign.Name}'");
+                    }
+                }
+
+                // Final logging and event
+                if (!string.IsNullOrWhiteSpace(streamerUrl))
+                {
+                    KickChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
+                    AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Selected Kick streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
+                }
+                else
+                {
+                    AppLogger.Warn("KickSelection", $"No valid Kick streamer URL resolved for general campaign '{campaign.Name}'.");
+                }
             }
-
-            AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Selected Kick streamer URL for campaign '{campaign.Name}': {streamerUrl}");
-            KickChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
 
             return streamerUrl;
         }
@@ -1246,30 +1567,69 @@ namespace Core.Managers
             }
             else
             {
+                // Step 1: Try remembered URL if available (validate it!)
                 if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl))
                 {
                     AppLogger.Info("TwitchSelection", $"Trying remembered Twitch streamer for general campaign '{campaign.Name}': {rememberedTwitchUrl}");
-                    streamerUrl = rememberedTwitchUrl!;
+
+                    await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await TwitchWebView!.NavigateAsync(rememberedTwitchUrl));
+
+                    await Task.Delay(1500);  // Consider replacing with WaitForNetworkIdleAsync(5000, 500) for consistency
+
+                    string categoryHrefResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await TwitchWebView!.ExecuteScriptAsync(getStreamerCategoryHrefJs));
+
+                    if (TwitchCategoryHrefMatchesCampaign(categoryHrefResult, campaign.Slug))
+                    {
+                        AppLogger.Info("TwitchSelection", $"Remembered streamer still matches category for general campaign '{campaign.Name}': {rememberedTwitchUrl}");
+                        streamerUrl = rememberedTwitchUrl!;
+                    }
+                    else
+                    {
+                        AppLogger.Warn("TwitchSelection", $"Remembered URL no longer matches category for general '{campaign.Name}': {rememberedTwitchUrl} | found: '{categoryHrefResult}'");
+                        // → fall through to directory fallback
+                    }
                 }
 
+                // Step 2: If no valid remembered → use category directory + pick first live streamer
+                if (string.IsNullOrWhiteSpace(streamerUrl) && campaign.ConnectUrls?.Any() == true)
+                {
+                    string directoryUrl = campaign.ConnectUrls[0];  // category/game directory page
+
+                    AppLogger.Info("TwitchSelection", $"Falling back to category directory for general campaign '{campaign.Name}': {directoryUrl}");
+
+                    await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await TwitchWebView!.NavigateAsync(directoryUrl));
+
+                    await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if timing issues occur
+
+                    string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
+                        await TwitchWebView!.ExecuteScriptAsync(getFirstStreamerJs));
+
+                    streamerUrl = firstStreamerRawResult?.Trim().Trim('"') ?? string.Empty;
+
+                    if (!string.IsNullOrWhiteSpace(streamerUrl))
+                    {
+                        AppLogger.Info("TwitchSelection", $"Selected first live streamer from directory for '{campaign.Name}': {streamerUrl}");
+                    }
+                    else
+                    {
+                        AppLogger.Warn("TwitchSelection", $"Failed to extract any first streamer from directory '{directoryUrl}' for general campaign '{campaign.Name}'");
+                    }
+                }
+
+                // Final logging and event
                 if (!string.IsNullOrWhiteSpace(streamerUrl))
                 {
-                    AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for campaign '{campaign.Name}': {streamerUrl}");
                     TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
-                    return streamerUrl;
+                    AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
                 }
-
-                await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(campaign.ConnectUrls[0]));
-                await Task.Delay(1500);
-
-                string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ExecuteScriptAsync(getFirstStreamerJs));
-                streamerUrl = firstStreamerRawResult?.Trim().Trim('"') ?? "";
+                else
+                {
+                    AppLogger.Warn("TwitchSelection", $"No valid Twitch streamer URL resolved for general campaign '{campaign.Name}'.");
+                }
             }
-
-            AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for campaign '{campaign.Name}': {streamerUrl}");
-            if (string.IsNullOrWhiteSpace(streamerUrl))
-                AppLogger.Warn("TwitchSelection", $"No Twitch streamer URL could be resolved for campaign '{campaign.Name}'.");
-            TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
 
             return streamerUrl;
         }
@@ -1291,6 +1651,16 @@ namespace Core.Managers
             string hrefs = rawCategoryHrefs.Trim().Trim('"');
             return hrefs.Contains(expectedCategoryPath, StringComparison.OrdinalIgnoreCase);
         }
+        private static bool KickCategoryHrefMatchesCampaign(string? rawCategoryHrefs, string? campaignSlug)
+        {
+            if (string.IsNullOrWhiteSpace(rawCategoryHrefs) || string.IsNullOrWhiteSpace(campaignSlug))
+                return false;
+
+            string expectedCategoryPath = $"/category/{campaignSlug}";
+            string hrefs = rawCategoryHrefs.Trim().Trim('"');
+            return hrefs.Contains(expectedCategoryPath, StringComparison.OrdinalIgnoreCase);
+        }
+
         /// <summary>
         /// Attempts to retrieve the last known streamer URL for the specified platform and campaign slug.
         /// </summary>
@@ -1345,6 +1715,29 @@ namespace Core.Managers
 
             if (changed)
                 SaveLastWatchedStreamers();
+        }
+        /// <summary>
+        /// Removes the remembered streamer URL for the specified platform and campaign, if present.
+        /// </summary>
+        /// <param name="platform">The platform whose remembered streamer collection should be updated.</param>
+        /// <param name="campaignSlug">The campaign slug key associated with the remembered streamer.</param>
+        private void ForgetLastStreamerUrl(Platform platform, string? campaignSlug)
+        {
+            if (string.IsNullOrWhiteSpace(campaignSlug))
+                return;
+
+            bool removed;
+            lock (_lastStreamerSync)
+            {
+                Dictionary<string, string> target = platform == Platform.Twitch ? _lastTwitchStreamers : _lastKickStreamers;
+                removed = target.Remove(campaignSlug);
+            }
+
+            if (removed)
+            {
+                SaveLastWatchedStreamers();
+                AppLogger.Info("Selection", $"Forgot remembered streamer for platform={platform}, campaignSlug='{campaignSlug}'.");
+            }
         }
         /// <summary>
         /// Loads the last watched streamers from persistent storage and updates the internal state.

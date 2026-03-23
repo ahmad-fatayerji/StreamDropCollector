@@ -1,9 +1,14 @@
 {
-  "version": "1.0.15",
+  "version": "1.0.16",
   "type": "Patch",
-  "description": "Improved Twitch reliability and inventory responsiveness.",
-  "changelog": "Added persistent GQL hash caching with retry-aware fallback, immediate claimed-badge inventory updates after auto-claim, remembered streamer selection, and verbose-gated debug/cache logging.",
+  "description": "Added game whitelist persistence fixes and inactive whitelist item visibility improvements.",
+  "changelog": "Fixed startup settings-save race that could overwrite whitelist values, kept inactive whitelisted slugs visible in settings, and removed inactive placeholders immediately when unchecked or cleared.",
   "historic_versions": [
+    {
+      "version": "1.0.15",
+      "type": "Patch",
+      "changelog": "Added persistent GQL hash caching with retry-aware fallback, immediate claimed-badge inventory updates after auto-claim, remembered streamer selection, and verbose-gated debug/cache logging."
+    },
     {
       "version": "1.0.14",
       "type": "Patch",

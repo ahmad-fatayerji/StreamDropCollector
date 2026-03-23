@@ -361,7 +361,7 @@ namespace UI.Views
                 IReadOnlyList<DropsCampaign> allCampaigns = await _dropsService.GetAllActiveCampaignsAsync(_kickWebView, _kickService.Status, _twitchWebView, _twitchService.Status, _twitchGqlService, cts.Token);
                 AppLogger.Info("Dashboard", $"Campaign load completed. totalCampaigns={allCampaigns.Count}, twitchStatus={_twitchService.Status}, kickStatus={_kickService.Status}");
 
-                foreach (DropsCampaign? c in allCampaigns.OrderBy(x => x.GameName))
+                foreach (DropsCampaign? c in allCampaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))
                     _activeCampaigns.Add(c);
 
                 DropsInventoryManager.Instance.UpdateCampaigns(allCampaigns, _twitchGqlService, startWatching: false);

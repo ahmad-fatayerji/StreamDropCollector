@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Windows;
 using Core.Managers;
 using Core.Logging;
+using Core.Enums;
 using System.IO;
 
 namespace UI.Views
@@ -78,6 +79,16 @@ namespace UI.Views
                 AppLogger.Error("Settings", "Failed to open logs folder.", ex);
                 MessageBox.Show($"Failed to open logs folder.\n\n{ex.Message}", "Logs", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private void OnClearTwitchWhitelistClick(object sender, RoutedEventArgs e)
+        {
+            UISettingsManager.Instance.ClearGameWhitelist(Platform.Twitch);
+        }
+
+        private void OnClearKickWhitelistClick(object sender, RoutedEventArgs e)
+        {
+            UISettingsManager.Instance.ClearGameWhitelist(Platform.Kick);
         }
     }
 }

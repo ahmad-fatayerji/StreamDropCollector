@@ -677,7 +677,7 @@ namespace UI.Views
                 catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
                 {
                     AppLogger.Info("WebViewCapture", $"[GQL Capture] Capture canceled for '{triggerText}'. {ex.Message}");
-                    throw; // User cancel — don't retry
+                    throw; // User cancel - don't retry
                 }
                 catch (Exception ex)
                 {
