@@ -40,15 +40,18 @@ namespace Core.Services
                 await host.NavigateAsync("https://web.kick.com/api/v1/drops/campaigns");
 
                 string rawJson = await host.ExecuteScriptAsync("document.body.innerText");
-                string json = rawJson.Trim('"').Replace("\\n", "").Replace("\\\"", "\"");
 
-                if (string.IsNullOrWhiteSpace(json) || json == "null")
+                // Step 1: decode the JSON string safely
+                string? json = JsonSerializer.Deserialize<string>(rawJson);
+
+                if (string.IsNullOrWhiteSpace(json))
                 {
                     AppLogger.Warn("KickDrops", "Kick campaign API returned empty payload.");
                     return Array.Empty<DropsCampaign>().AsReadOnly();
                 }
 
-                JsonDocument doc = JsonDocument.Parse(json);
+                // Step 2: parse actual JSON
+                using JsonDocument doc = JsonDocument.Parse(json);
                 if (!doc.RootElement.TryGetProperty("data", out JsonElement dataArray))
                 {
                     AppLogger.Warn("KickDrops", "Kick campaign API payload missing 'data' property.");
