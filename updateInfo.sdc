@@ -1,9 +1,13 @@
 {
   "version": "1.0.16",
   "type": "Patch",
-  "description": "Added game whitelist persistence fixes and inactive whitelist item visibility improvements.",
-  "changelog": "Fixed startup settings-save race that could overwrite whitelist values, kept inactive whitelisted slugs visible in settings, and removed inactive placeholders immediately when unchecked or cleared.",
+  "changelog": "Fixed an issue with Kick deserialization of JSON data & an several minor issues related to progress tracking & automatic claiming of rewards.",
   "historic_versions": [
+    {
+      "version": "1.0.16",
+      "type": "Patch",
+      "changelog": "Fixed startup settings-save race that could overwrite whitelist values, kept inactive whitelisted slugs visible in settings, and removed inactive placeholders immediately when unchecked or cleared."
+    },
     {
       "version": "1.0.15",
       "type": "Patch",
