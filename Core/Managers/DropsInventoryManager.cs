@@ -251,7 +251,19 @@ namespace Core.Managers
             {
                 DropsCampaign? campaign = ActiveCampaigns.FirstOrDefault(c => c.Platform == platform && c.Id == campaignId);
                 if (campaign == null || !campaign.HasProgressToMake())
+                {
+                    switch (platform)
+                    {
+                        case Platform.Twitch:
+                            _currentTwitchCampaign = null;
+                            break;
+                        case Platform.Kick:
+                            _currentKickCampaign = null;
+                            break;
+                    }
+                    UpdateCurrentSelectionFlags();
                     return;
+                }
 
                 int campaignIndex = ActiveCampaigns.IndexOf(campaign);
                 if (campaignIndex < 0)
@@ -1394,7 +1406,7 @@ namespace Core.Managers
                     const link = firstCard.querySelector('a');
                     return link ? link.href.trim() : '';
                 }})();
-            "; 
+            ";
 
             if (!campaign.IsGeneralDrop)
             {
@@ -1483,17 +1495,17 @@ namespace Core.Managers
                         AppLogger.Warn("KickSelection", $"Failed to extract any first streamer from directory '{directoryUrl}' for general campaign '{campaign.Name}'");
                     }
                 }
+            }
 
-                // Final logging and event
-                if (!string.IsNullOrWhiteSpace(streamerUrl))
-                {
-                    KickChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
-                    AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Selected Kick streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
-                }
-                else
-                {
-                    AppLogger.Warn("KickSelection", $"No valid Kick streamer URL resolved for general campaign '{campaign.Name}'.");
-                }
+            // Final logging and event
+            if (!string.IsNullOrWhiteSpace(streamerUrl))
+            {
+                KickChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
+                AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Selected Kick streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
+            }
+            else
+            {
+                AppLogger.Warn("KickSelection", $"No valid Kick streamer URL resolved for general campaign '{campaign.Name}'.");
             }
 
             return streamerUrl;
@@ -1618,17 +1630,17 @@ namespace Core.Managers
                         AppLogger.Warn("TwitchSelection", $"Failed to extract any first streamer from directory '{directoryUrl}' for general campaign '{campaign.Name}'");
                     }
                 }
+            }
 
-                // Final logging and event
-                if (!string.IsNullOrWhiteSpace(streamerUrl))
-                {
-                    TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
-                    AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
-                }
-                else
-                {
-                    AppLogger.Warn("TwitchSelection", $"No valid Twitch streamer URL resolved for general campaign '{campaign.Name}'.");
-                }
+            // Final logging and event
+            if (!string.IsNullOrWhiteSpace(streamerUrl))
+            {
+                TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
+                AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
+            }
+            else
+            {
+                AppLogger.Warn("TwitchSelection", $"No valid Twitch streamer URL resolved for general campaign '{campaign.Name}'.");
             }
 
             return streamerUrl;
