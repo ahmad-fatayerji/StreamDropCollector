@@ -261,6 +261,7 @@ namespace Core.Managers
                             _currentKickCampaign = null;
                             break;
                     }
+
                     UpdateCurrentSelectionFlags();
                     return;
                 }
