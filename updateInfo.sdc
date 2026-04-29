@@ -1,8 +1,13 @@
 {
-  "version": "1.0.16",
-  "type": "Patch",
-  "changelog": "Fixed an issue with Kick deserialization of JSON data & an several minor issues related to progress tracking & automatic claiming of rewards.",
+  "version": "1.0.18",
+  "type": "Feature",
+  "changelog": "Added missing Kick campaigns for site wide drops.",
   "historic_versions": [
+    {
+      "version": "1.0.17",
+      "type": "Patch",
+      "changelog": "Fixed an issue with Kick deserialization of JSON data & an several minor issues related to progress tracking & automatic claiming of rewards."
+    },
     {
       "version": "1.0.16",
       "type": "Patch",

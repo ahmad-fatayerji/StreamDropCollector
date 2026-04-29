@@ -65,7 +65,7 @@ namespace Core.Services
                     if (!campaign.TryGetProperty("status", out JsonElement status) || status.GetString() != "active")
                         continue;
 
-                    JsonElement category = campaign.GetProperty("category");
+                    campaign.TryGetProperty("category", out JsonElement category);
 
                     DropsReward[] rewards = [.. campaign.GetProperty("rewards")
                         .EnumerateArray()
@@ -97,30 +97,58 @@ namespace Core.Services
 
                     bool general = false;
 
+                    // Category-less campaigns (e.g. Watch ANYONE, in any category)
+                    if (category.ValueKind == JsonValueKind.Undefined)
+                    {
+                        connectUrls.Add("https://kick.com/browse?sort=viewers_high_to_low");
+                        general = true;
+                    }
+
                     // General drops = watch ANYONE in category
-                    if (connectUrls.Count == 0)
+                    if (connectUrls.Count == 0 && category.ValueKind != JsonValueKind.Undefined)
                     {
                         string slug = category.GetProperty("slug").GetString()!;
                         connectUrls.Add($"https://kick.com/category/{slug}/drops");
                         general = true;
                     }
 
-                    // Remove duplicates + sort by preference (optional)
+                    // Remove duplicates
                     connectUrls = [.. connectUrls.Distinct()];
 
-                    campaigns.Add(new DropsCampaign(
-                        Id: campaign.GetProperty("id").GetString()!,
-                        Name: campaign.GetProperty("name").GetString()!,
-                        Slug: category.GetProperty("slug").GetString()!,
-                        GameName: category.GetProperty("name").GetString()!,
-                        GameImageUrl: category.GetProperty("image_url").GetString(),
-                        StartsAt: DateTimeOffset.Parse(campaign.GetProperty("starts_at").GetString()!),
-                        EndsAt: DateTimeOffset.Parse(campaign.GetProperty("ends_at").GetString()!),
-                        Rewards: rewards,
-                        Platform: Platform,
-                        ConnectUrls: connectUrls.AsReadOnly(),
-                        IsGeneralDrop: general
-                    ));
+                    if (category.ValueKind == JsonValueKind.Undefined)
+                    {
+                        JsonElement organization = campaign.GetProperty("organization");
+
+                        campaigns.Add(new DropsCampaign(
+                            Id: campaign.GetProperty("id").GetString()!,
+                            Name: campaign.GetProperty("name").GetString()!,
+                            Slug: "",
+                            GameName: organization.GetProperty("name").GetString()!,
+                            GameImageUrl: organization.GetProperty("logo_url").GetString(),
+                            StartsAt: DateTimeOffset.Parse(campaign.GetProperty("starts_at").GetString()!),
+                            EndsAt: DateTimeOffset.Parse(campaign.GetProperty("ends_at").GetString()!),
+                            Rewards: rewards,
+                            Platform: Platform,
+                            ConnectUrls: connectUrls.AsReadOnly(),
+                            IsGeneralDrop: general
+                        ));
+                    }
+                    else
+                    {
+                        campaigns.Add(new DropsCampaign(
+                            Id: campaign.GetProperty("id").GetString()!,
+                            Name: campaign.GetProperty("name").GetString()!,
+                            Slug: category.GetProperty("slug").GetString()!,
+                            GameName: category.GetProperty("name").GetString()!,
+                            GameImageUrl: category.GetProperty("image_url").GetString(),
+                            StartsAt: DateTimeOffset.Parse(campaign.GetProperty("starts_at").GetString()!),
+                            EndsAt: DateTimeOffset.Parse(campaign.GetProperty("ends_at").GetString()!),
+                            Rewards: rewards,
+                            Platform: Platform,
+                            ConnectUrls: connectUrls.AsReadOnly(),
+                            IsGeneralDrop: general
+                        ));
+                    }
                 }
 
                 // 2. Get progress + claimed status

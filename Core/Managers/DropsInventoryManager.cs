@@ -1388,26 +1388,39 @@ namespace Core.Managers
                     return categoryElement ? categoryElement.href.trim() : '';
                 })();
             ";
+            string getFirstStreamerFromDirectoryJs;
 
-            string getFirstStreamerFromDirectoryJs = $@"
-                (() => {{
-                    const titles = document.querySelectorAll('h3.text-base.font-bold.leading-5');
-                    if (titles.length === 0) return '';
-                    let targetSection = null;
-                    for (const h3 of titles) {{
-                        if (h3.innerText.includes('{campaign.Name.Replace("'", "\\'")}')) {{
-                            targetSection = h3.closest('section') || h3.parentElement.parentElement.parentElement.parentElement;
-                            break;
+            if (string.IsNullOrEmpty(campaign.Slug))
+            {
+                getFirstStreamerFromDirectoryJs = $@"
+                    (() => {{
+                        const link = document.querySelectorAll('section>div.group\\/card>a')[0].href
+                        return link ? link.trim() : '';
+                    }})();
+                ";
+            }
+            else
+            {
+                getFirstStreamerFromDirectoryJs = $@"
+                    (() => {{
+                        const titles = document.querySelectorAll('h3.text-base.font-bold.leading-5');
+                        if (titles.length === 0) return '';
+                        let targetSection = null;
+                        for (const h3 of titles) {{
+                            if (h3.innerText.includes('{campaign.Name.Replace("'", "\\'")}')) {{
+                                targetSection = h3.closest('section') || h3.parentElement.parentElement.parentElement.parentElement;
+                                break;
+                            }}
                         }}
-                    }}
-                    if (!targetSection) return '';
-                    const streamGrid = targetSection.querySelector(':scope > div:nth-child(2)') || targetSection.children[1];
-                    if (!streamGrid || streamGrid.children.length === 0) return '';
-                    const firstCard = streamGrid.children[0];
-                    const link = firstCard.querySelector('a');
-                    return link ? link.href.trim() : '';
-                }})();
-            ";
+                        if (!targetSection) return '';
+                        const streamGrid = targetSection.querySelector(':scope > div:nth-child(2)') || targetSection.children[1];
+                        if (!streamGrid || streamGrid.children.length === 0) return '';
+                        const firstCard = streamGrid.children[0];
+                        const link = firstCard.querySelector('a');
+                        return link ? link.href.trim() : '';
+                    }})();
+                ";
+            }
 
             if (!campaign.IsGeneralDrop)
             {
@@ -1482,8 +1495,7 @@ namespace Core.Managers
 
                     await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if needed
 
-                    string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () =>
-                        await KickWebView!.ExecuteScriptAsync(getFirstStreamerFromDirectoryJs));
+                    string firstStreamerRawResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ExecuteScriptAsync(getFirstStreamerFromDirectoryJs));
 
                     streamerUrl = firstStreamerRawResult?.Trim().Trim('"') ?? string.Empty;
 
@@ -1666,8 +1678,10 @@ namespace Core.Managers
         }
         private static bool KickCategoryHrefMatchesCampaign(string? rawCategoryHrefs, string? campaignSlug)
         {
-            if (string.IsNullOrWhiteSpace(rawCategoryHrefs) || string.IsNullOrWhiteSpace(campaignSlug))
+            if (string.IsNullOrWhiteSpace(rawCategoryHrefs))
                 return false;
+            else if (string.IsNullOrWhiteSpace(campaignSlug))
+                return true;
 
             string expectedCategoryPath = $"/category/{campaignSlug}";
             string hrefs = rawCategoryHrefs.Trim().Trim('"');
