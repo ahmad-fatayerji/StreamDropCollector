@@ -691,7 +691,11 @@ namespace Core.Managers
                             .OrderBy(r => r.RequiredMinutes)
                             .FirstOrDefault();
 
-                        _twitchDropWatchedSeconds = nextTwitchReward?.ProgressMinutes * 60 ?? 0;
+                        int twitchMinutesBeforeNextReward = bestTwitch.Rewards
+                            .Where(r => !r.IsClaimed && r.RequiredMinutes < nextTwitchReward!.RequiredMinutes)
+                            .Sum(r => r.RequiredMinutes);
+                        _twitchDropWatchedSeconds = Math.Max(0, (nextTwitchReward?.ProgressMinutes ?? 0) - twitchMinutesBeforeNextReward) * 60;
+
                         _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
 
                         VerboseLog("SelectionBaseline",
@@ -793,7 +797,11 @@ namespace Core.Managers
                             .OrderBy(r => r.RequiredMinutes)
                             .FirstOrDefault();
 
-                        _kickDropWatchedSeconds = nextKickReward?.ProgressMinutes * 60 ?? 0;
+                        int kickMinutesBeforeNextReward = bestKick.Rewards
+                            .Where(r => !r.IsClaimed && r.RequiredMinutes < nextKickReward!.RequiredMinutes)
+                            .Sum(r => r.RequiredMinutes);
+                        _kickDropWatchedSeconds = Math.Max(0, (nextKickReward?.ProgressMinutes ?? 0) - kickMinutesBeforeNextReward) * 60;
+
                         _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
 
                         VerboseLog("SelectionBaseline", $"Kick campaignId={bestKick.Id}, campaignWatchedSecondsBaseline={_kickWatchedSeconds}, dropWatchedSecondsBaseline={_kickDropWatchedSeconds}, nextRewardId={nextKickReward?.Id ?? "none"}, unclaimedRewards={bestKick.Rewards.Count(r => !r.IsClaimed)}");
