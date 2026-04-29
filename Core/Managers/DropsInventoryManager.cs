@@ -278,6 +278,7 @@ namespace Core.Managers
                 }
 
                 VerboseLog("MinuteTick", $"campaignId={campaign.Id}, platform={campaign.Platform}, minutesAdded={minutesToAdd}, rewardsUpdated={campaign.Rewards.Count}, unclaimedRewards={campaign.Rewards.Count(r => !r.IsClaimed)}");
+                VerboseLog("RewardTransition", $"platform={platform}, campaignId={campaignId}, minutesAdded={minutesToAdd}, rewards={string.Join(", ", updatedRewards.Select(r => $"{r.Name}:{r.ProgressMinutes}/{r.RequiredMinutes}(claimed={r.IsClaimed})"))}");
 
                 DropsCampaign updatedCampaign = campaign with { Rewards = updatedRewards };
                 ActiveCampaigns[campaignIndex] = updatedCampaign;
@@ -307,6 +308,13 @@ namespace Core.Managers
                 _twitchWatchedSeconds++;
                 _twitchDropWatchedSeconds++;
 
+                DropsReward? nextTwitchReward = currentTwitchCampaign.Rewards
+                    .Where(r => !r.IsClaimed)
+                    .OrderBy(r => r.RequiredMinutes)
+                    .FirstOrDefault();
+
+                VerboseLog("DropPointer", $"Twitch nextReward={nextTwitchReward?.Name ?? "none"}, nextRewardId={nextTwitchReward?.Id ?? "none"}, requiredMinutes={nextTwitchReward?.RequiredMinutes ?? 0}, dropWatchedSeconds={_twitchDropWatchedSeconds}");
+
                 int twitchMinuteBucket = _twitchWatchedSeconds / 60;
                 if (twitchMinuteBucket > _twitchAppliedMinuteBucket)
                 {
@@ -326,6 +334,13 @@ namespace Core.Managers
             {
                 _kickWatchedSeconds++;
                 _kickDropWatchedSeconds++;
+
+                DropsReward? nextKickReward = currentKickCampaign.Rewards
+                    .Where(r => !r.IsClaimed)
+                    .OrderBy(r => r.RequiredMinutes)
+                    .FirstOrDefault();
+
+                VerboseLog("DropPointer", $"Kick nextReward={nextKickReward?.Name ?? "none"}, nextRewardId={nextKickReward?.Id ?? "none"}, requiredMinutes={nextKickReward?.RequiredMinutes ?? 0}, dropWatchedSeconds={_kickDropWatchedSeconds}");
 
                 int kickMinuteBucket = _kickWatchedSeconds / 60;
                 if (kickMinuteBucket > _kickAppliedMinuteBucket)
