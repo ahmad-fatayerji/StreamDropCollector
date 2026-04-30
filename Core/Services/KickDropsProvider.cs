@@ -189,7 +189,7 @@ namespace Core.Services
                             // UPDATE IN-PLACE
                             targetReward = targetReward with
                             {
-                                ProgressMinutes = item.GetProperty("progress_units").GetInt32(),
+                                ProgressMinutes = Math.Min(item.GetProperty("progress_units").GetInt32(), targetReward.RequiredMinutes),
                                 IsClaimed = reward.GetProperty("claimed").GetBoolean()
                             };
 

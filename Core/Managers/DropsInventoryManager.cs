@@ -273,7 +273,10 @@ namespace Core.Managers
                 List<DropsReward> updatedRewards = new List<DropsReward>(campaign.Rewards.Count);
                 foreach (DropsReward reward in campaign.Rewards)
                 {
-                    int newProgress = reward.ProgressMinutes + minutesToAdd;
+                    int newProgress = reward.IsClaimed || reward.ProgressMinutes >= reward.RequiredMinutes
+                        ? reward.ProgressMinutes
+                        : Math.Min(reward.ProgressMinutes + minutesToAdd, reward.RequiredMinutes);
+
                     updatedRewards.Add(reward with { ProgressMinutes = newProgress });
                 }
 
@@ -323,7 +326,7 @@ namespace Core.Managers
                     ApplyMinuteProgressToActiveCampaign(Platform.Twitch, currentTwitchCampaign.Id, minutesToApply);
                 }
 
-                byte twitchCampPct = CalculateLiveCampaignProgress(currentTwitchCampaign, _twitchWatchedSeconds);
+                byte twitchCampPct = CalculateLiveCampaignProgress(currentTwitchCampaign);
                 byte twitchDropPct = CalculateLiveDropProgress(currentTwitchCampaign, _twitchDropWatchedSeconds);
                 VerboseLog("LiveProgress", $"Twitch tick campaignId={currentTwitchCampaign.Id}, campaignWatchedSeconds={_twitchWatchedSeconds}, dropWatchedSeconds={_twitchDropWatchedSeconds}, campaignPct={twitchCampPct}, dropPct={twitchDropPct}");
                 TwitchProgressChanged?.Invoke(twitchCampPct, twitchDropPct);
@@ -350,7 +353,7 @@ namespace Core.Managers
                     ApplyMinuteProgressToActiveCampaign(Platform.Kick, currentKickCampaign.Id, minutesToApply);
                 }
 
-                byte kickCampPct = CalculateLiveCampaignProgress(currentKickCampaign, _kickWatchedSeconds);
+                byte kickCampPct = CalculateLiveCampaignProgress(currentKickCampaign);
                 byte kickDropPct = CalculateLiveDropProgress(currentKickCampaign, _kickDropWatchedSeconds);
                 VerboseLog("LiveProgress", $"Kick tick campaignId={currentKickCampaign.Id}, campaignWatchedSeconds={_kickWatchedSeconds}, dropWatchedSeconds={_kickDropWatchedSeconds}, campaignPct={kickCampPct}, dropPct={kickDropPct}");
                 KickProgressChanged?.Invoke(kickCampPct, kickDropPct);
@@ -443,34 +446,23 @@ namespace Core.Managers
         /// equal to 0.</param>
         /// <returns>A value between 0 and 100 representing the percentage of overall campaign completion.
         /// Returns 100 if all rewards are already claimed or if total required time is zero.</returns>
-        private static byte CalculateLiveCampaignProgress(DropsCampaign? campaign, int totalWatchedSeconds)
+        private static byte CalculateLiveCampaignProgress(DropsCampaign? campaign)
         {
             if (campaign == null)
                 return 0;
 
             // Total required minutes across ALL rewards (claimed + unclaimed)
-            int totalRequiredMinutes = campaign.Rewards
-                .Sum(r => r.RequiredMinutes);
+            int totalRequiredMinutes = campaign.Rewards.Sum(r => r.RequiredMinutes);
 
             if (totalRequiredMinutes == 0)
                 return 100; // No requirements → done
 
-            // Sum required minutes only for claimed rewards (full credit for these)
-            int claimedRequiredMinutes = campaign.Rewards
-                .Where(r => r.IsClaimed)
-                .Sum(r => r.RequiredMinutes);
+            
+            int effectiveMinutes = campaign.Rewards.Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes));
 
-            // Convert watched seconds to minutes for cleaner math
-            double watchedMinutes = totalWatchedSeconds / 60.0;
-
-            // Effective completed minutes = fully claimed parts + current progress on the rest
-            double effectiveCompletedMinutes = claimedRequiredMinutes + watchedMinutes;
-
-            // Prevent overflow if user has watched way more than needed
-            effectiveCompletedMinutes = Math.Min(effectiveCompletedMinutes, totalRequiredMinutes);
-
-            double percentage = (effectiveCompletedMinutes / totalRequiredMinutes) * 100;
+            double percentage = (double)effectiveMinutes / totalRequiredMinutes * 100;
             return (byte)Math.Clamp((int)Math.Floor(percentage), 0, 100);
+
         }
         /// <summary>
         /// Calculates the progress percentage toward the next unclaimed live drop reward in the specified campaign.
@@ -545,8 +537,8 @@ namespace Core.Managers
                 TwitchProgressChanged?.Invoke(0, 0);
                 KickChannelChanged?.Invoke(string.Empty);
                 KickProgressChanged?.Invoke(0, 0);
-                _twitchAppliedMinuteBucket = 0;
-                _kickAppliedMinuteBucket = 0;
+                _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
+                _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
 
                 VerboseLog("StartWatching", $"AFTER reset | twitchApplied={_twitchAppliedMinuteBucket} | kickApplied={_kickAppliedMinuteBucket}");
 
@@ -644,9 +636,9 @@ namespace Core.Managers
                 List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
                 List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
 
-                // ────────────────────────────────────────────────────────────────
+                // ----------------------------------------------------------------
                 // Twitch handling
-                // ────────────────────────────────────────────────────────────────
+                // ----------------------------------------------------------------
                 if (twitchCampaigns.Count != 0 && TwitchWebView != null)
                 {
                     if (token.IsCancellationRequested)
@@ -698,8 +690,7 @@ namespace Core.Managers
 
                         // Sync baseline NOW - right after selection, before any further logic
                         _twitchWatchedSeconds = bestTwitch.Rewards
-                            .Where(r => !r.IsClaimed)
-                            .Sum(r => r.ProgressMinutes * 60);
+                            .Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
 
                         DropsReward? nextTwitchReward = bestTwitch.Rewards
                             .Where(r => !r.IsClaimed)
@@ -722,7 +713,7 @@ namespace Core.Managers
 
                         VerboseLog("SelectionBaseline", $"Twitch campaignId={bestTwitch.Id}, campaignWatchedSecondsBaseline={_twitchWatchedSeconds}, dropWatchedSecondsBaseline={_twitchDropWatchedSeconds}, nextRewardId={nextTwitchReward?.Id ?? "none"}, unclaimedRewards={bestTwitch.Rewards.Count(r => !r.IsClaimed)}");
 
-                        byte initialTwitchPct = CalculateLiveCampaignProgress(bestTwitch, _twitchWatchedSeconds);
+                        byte initialTwitchPct = CalculateLiveCampaignProgress(bestTwitch);
                         byte initialTwitchDropPct = CalculateLiveDropProgress(bestTwitch, _twitchDropWatchedSeconds);
                         TwitchProgressChanged?.Invoke(initialTwitchPct, initialTwitchDropPct);
 
@@ -751,9 +742,9 @@ namespace Core.Managers
                     }
                 }
 
-                // ────────────────────────────────────────────────────────────────
+                // ----------------------------------------------------------------
                 // Kick handling
-                // ────────────────────────────────────────────────────────────────
+                // ----------------------------------------------------------------
                 if (kickCampaigns.Count != 0 && KickWebView != null)
                 {
                     if (token.IsCancellationRequested)
@@ -804,8 +795,7 @@ namespace Core.Managers
                         UpdateCurrentSelectionFlags();
 
                         _kickWatchedSeconds = bestKick.Rewards
-                            .Where(r => !r.IsClaimed)
-                            .Sum(r => r.ProgressMinutes * 60);
+                            .Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
 
                         DropsReward? nextKickReward = bestKick.Rewards
                             .Where(r => !r.IsClaimed)
@@ -821,7 +811,7 @@ namespace Core.Managers
 
                         VerboseLog("SelectionBaseline", $"Kick campaignId={bestKick.Id}, campaignWatchedSecondsBaseline={_kickWatchedSeconds}, dropWatchedSecondsBaseline={_kickDropWatchedSeconds}, nextRewardId={nextKickReward?.Id ?? "none"}, unclaimedRewards={bestKick.Rewards.Count(r => !r.IsClaimed)}");
 
-                        byte initialKickPct = CalculateLiveCampaignProgress(bestKick, _kickWatchedSeconds);
+                        byte initialKickPct = CalculateLiveCampaignProgress(bestKick);
                         byte initialKickDropPct = CalculateLiveDropProgress(bestKick, _kickDropWatchedSeconds);
                         KickProgressChanged?.Invoke(initialKickPct, initialKickDropPct);
 
@@ -1017,8 +1007,8 @@ namespace Core.Managers
                     bool kickOnline = _currentKickCampaign != null && await IsKickStreamOnline();
                     bool kickCorrectCategory = _currentKickCampaign != null && await IsKickStreamCategoryCorrect();
 
-                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
-                    AppLogger.Debug("HealthCheck", $"[Health Check] Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory} | Twitch showing ad: {twitchShowingAd}");
+                    AppLogger.Debug("HealthCheck", $"Twitch: {(twitchOnline ? "ONLINE" : "OFFLINE")} | Kick: {(kickOnline ? "ONLINE" : "OFFLINE")}");
+                    AppLogger.Debug("HealthCheck", $"Twitch category correct: {twitchCorrectCategory} | Kick category correct: {kickCorrectCategory} | Twitch showing ad: {twitchShowingAd}");
                     AppLogger.Info("HealthCheck", $"Twitch online={twitchOnline}, categoryOk={twitchCorrectCategory}, showingAd={twitchShowingAd}; Kick online={kickOnline}, categoryOk={kickCorrectCategory}");
 
                     // Group campaigns by platform
@@ -1042,7 +1032,7 @@ namespace Core.Managers
                         if (!kickOnline)
                             _lastKnownKickOnlineState = false;
 
-                        AppLogger.Debug("HealthCheck", "[Health Check] Stream unhealthy -> forcing re-evaluation");
+                        AppLogger.Debug("HealthCheck", "Stream unhealthy -> forcing re-evaluation");
                         AppLogger.Warn("HealthCheck", $"Forcing re-evaluation. twitchOnline={twitchOnline}, twitchCategoryOk={twitchCorrectCategory}, twitchAd={twitchShowingAd}, kickOnline={kickOnline}, kickCategoryOk={kickCorrectCategory}");
                         _streamHealthTimer?.Stop();
                         await StartWatchingStreams(true); // This will restart everything safely
