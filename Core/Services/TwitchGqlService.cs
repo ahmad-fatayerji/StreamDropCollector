@@ -197,7 +197,7 @@ namespace Core.Services
 
             const string operationName = "StreamMetadata";
             const string hash = "b57f9b910f8cd1a4659d894fe7550ccc81ec9052c01e438b290fd66a040b9b93";
-            const int batchSize = 50;
+            const int batchSize = 30;
 
             SetCachedHash(operationName, hash);
 

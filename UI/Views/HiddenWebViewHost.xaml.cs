@@ -291,9 +291,24 @@ namespace UI.Views
                     string? requestId = payload.GetProperty("requestId").GetString();
                     if (requestId == null) return;
 
-                    // MUST RUN ON UI THREAD - THIS IS THE FIX
+                    // Stale requestIds from previous navigations are hex strings (e.g. "A63D247D...")
+                    // Fresh ones from the current page are numeric (e.g. "42304.356")
+                    // Skip stale ones as their bodies are no longer available in the CDP buffer
+                    if (!requestId.Contains('.'))
+                    {
+                        AppLogger.Debug("WebViewCapture", $"[Kick Progress] Skipping stale requestId={requestId}");
+                        return;
+                    }
+
+                    // Log how long between event fire and dispatch execution
+                    DateTime eventFiredAt = DateTime.UtcNow;
+                    AppLogger.Debug("WebViewCapture", $"[Kick Progress] responseReceived fired. requestId={requestId}, url={url}");
+
                     Dispatcher.InvokeAsync(async () =>
                     {
+                        TimeSpan dispatchDelay = DateTime.UtcNow - eventFiredAt;
+                        AppLogger.Debug("WebViewCapture", $"[Kick Progress] Dispatcher executing. dispatchDelay={dispatchDelay.TotalMilliseconds}ms, requestId={requestId}");
+
                         try
                         {
                             string result = await WebView.CoreWebView2.CallDevToolsProtocolMethodAsync(
@@ -303,16 +318,22 @@ namespace UI.Views
                             JsonElement bodyJson = JsonDocument.Parse(result).RootElement;
                             string body = bodyJson.GetProperty("body").GetString() ?? "";
 
+                            AppLogger.Debug("WebViewCapture", $"[Kick Progress] getResponseBody succeeded. bodyLength={body.Length}");
+
                             if (body.Contains("claimed") || body.Contains("progress_units") || body.Contains("rewards"))
                             {
                                 AppLogger.Debug("WebViewCapture", $"[Kick Progress] SUCCESS - REAL RESPONSE CAPTURED ({body.Length} chars)");
                                 responseReceived.DevToolsProtocolEventReceived -= Handler;
                                 tcs.TrySetResult(body);
                             }
+                            else
+                            {
+                                AppLogger.Warn("WebViewCapture", $"[Kick Progress] Body captured but no expected fields. body={body}");
+                            }
                         }
                         catch (Exception ex)
                         {
-                            AppLogger.Warn("WebViewCapture", $"[Kick Progress] getResponseBody failed: {ex.Message}");
+                            AppLogger.Warn("WebViewCapture", $"[Kick Progress] getResponseBody failed: {ex.Message}, requestId={requestId}, dispatchDelay={dispatchDelay.TotalMilliseconds}ms");
                         }
                     });
                 }
