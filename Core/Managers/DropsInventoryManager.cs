@@ -618,7 +618,8 @@ namespace Core.Managers
                     NotificationManager.ShowNotification("Drop Ready to Claim", $"You have {readyToClaimRewards.Count} drops rewards ready to claim. Please claim them manually.");
                 }
 
-                if (!ActiveCampaigns.Any(c => c.HasProgressToMake()))
+                List<DropsCampaign> snapshot = [.. ActiveCampaigns];
+                if (!snapshot.Any(c => c.HasProgressToMake()))
                 {
                     AppLogger.Debug("Miner", "[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
                     AppLogger.Info("Miner", "No campaigns with progress after claim pass; switching to Idle.");
@@ -633,8 +634,8 @@ namespace Core.Managers
                     return;
 
                 // Group campaigns by platform
-                List<DropsCampaign> twitchCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake())];
-                List<DropsCampaign> kickCampaigns = [.. ActiveCampaigns.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake())];
+                List<DropsCampaign> twitchCampaigns = snapshot.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake()).ToList();
+                List<DropsCampaign> kickCampaigns = snapshot.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake()).ToList();
 
                 // ----------------------------------------------------------------
                 // Twitch handling
