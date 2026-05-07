@@ -56,7 +56,7 @@ namespace Core.Services
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "GitHubDirectoryDownloaderService");
 
             // Replace with token, IF token exists locally (development purposes only)
-            string githubToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? "N/A";
+            string githubToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN") ?? "";
             if (!string.IsNullOrEmpty(githubToken))
                 _httpClient.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("token", githubToken);
             #endregion
