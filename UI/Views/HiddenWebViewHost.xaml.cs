@@ -329,7 +329,31 @@ namespace UI.Views
 
                             AppLogger.Debug("WebViewCapture", $"[Kick Progress] getResponseBody succeeded. bodyLength={body.Length}");
 
-                            if (body.Contains("claimed") || body.Contains("progress_units") || body.Contains("rewards"))
+                            // Don't assume a successful response contains reward data.
+                            // {"data":[],"message":"Success"} is a valid "no progress" state, not an error.
+                            // If we reject it, the capture never completes and gets retried indefinitely.
+                            bool hasRewardFields = body.Contains("claimed") || body.Contains("progress_units") || body.Contains("rewards");
+                            bool isValidProgressPayload = hasRewardFields;
+
+                            if (!isValidProgressPayload)
+                            {
+                                try
+                                {
+                                    JsonElement rootElement = JsonDocument.Parse(body).RootElement;
+                                    isValidProgressPayload =
+                                        rootElement.ValueKind == JsonValueKind.Object
+                                            &&
+                                        rootElement.TryGetProperty("data", out JsonElement dataEl)
+                                            &&
+                                        dataEl.ValueKind == JsonValueKind.Array;
+                                }
+                                catch
+                                {
+                                    // Ignore failures on this level, this shouldn't crash / stagnate the app
+                                }
+                            }
+
+                            if (isValidProgressPayload)
                             {
                                 AppLogger.Debug("WebViewCapture", $"[Kick Progress] SUCCESS - RESPONSE CAPTURED ({body.Length} chars)");
                                 responseReceived.DevToolsProtocolEventReceived -= Handler;
