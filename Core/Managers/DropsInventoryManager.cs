@@ -25,9 +25,18 @@ namespace Core.Managers
         public event Action<string>? MinerStatusChanged;
         public event Action<string>? TwitchChannelChanged;
         public event Action<string>? KickChannelChanged;
+        // (campaign name, game image URL). Empty name + null URL means "cleared".
+        public event Action<string, string?>? TwitchCampaignChanged;
+        public event Action<string, string?>? KickCampaignChanged;
+        // (reward/item name, reward image URL). Empty name + null URL means "cleared".
+        public event Action<string, string?>? TwitchDropChanged;
+        public event Action<string, string?>? KickDropChanged;
 
         // Currently watched campaigns
         private DropsCampaign? _currentTwitchCampaign;
+        private string? _currentTwitchLogin; // login of the Twitch streamer currently being watched
+        private string? _lastTwitchDropId; // id of the last reward reported via TwitchDropChanged
+        private string? _lastKickDropId;   // id of the last reward reported via KickDropChanged
         private DropsCampaign? _currentKickCampaign;
         private IGqlService? _twitchGqlService;
 
@@ -317,6 +326,7 @@ namespace Core.Managers
                     .FirstOrDefault();
 
                 VerboseLog("DropPointer", $"Twitch nextReward={nextTwitchReward?.Name ?? "none"}, nextRewardId={nextTwitchReward?.Id ?? "none"}, requiredMinutes={nextTwitchReward?.RequiredMinutes ?? 0}, dropWatchedSeconds={_twitchDropWatchedSeconds}");
+                RaiseTwitchDropChangedIfNeeded(nextTwitchReward);
 
                 int twitchMinuteBucket = _twitchWatchedSeconds / 60;
                 if (twitchMinuteBucket > _twitchAppliedMinuteBucket)
@@ -344,6 +354,7 @@ namespace Core.Managers
                     .FirstOrDefault();
 
                 VerboseLog("DropPointer", $"Kick nextReward={nextKickReward?.Name ?? "none"}, nextRewardId={nextKickReward?.Id ?? "none"}, requiredMinutes={nextKickReward?.RequiredMinutes ?? 0}, dropWatchedSeconds={_kickDropWatchedSeconds}");
+                RaiseKickDropChangedIfNeeded(nextKickReward);
 
                 int kickMinuteBucket = _kickWatchedSeconds / 60;
                 if (kickMinuteBucket > _kickAppliedMinuteBucket)
@@ -457,7 +468,7 @@ namespace Core.Managers
             if (totalRequiredMinutes == 0)
                 return 100; // No requirements → done
 
-            
+
             int effectiveMinutes = campaign.Rewards.Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes));
 
             double percentage = (double)effectiveMinutes / totalRequiredMinutes * 100;
@@ -534,8 +545,14 @@ namespace Core.Managers
 
                 // Reset current selections and progress
                 TwitchChannelChanged?.Invoke(string.Empty);
+                TwitchCampaignChanged?.Invoke(string.Empty, null);
+                _lastTwitchDropId = null;
+                TwitchDropChanged?.Invoke(string.Empty, null);
                 TwitchProgressChanged?.Invoke(0, 0);
                 KickChannelChanged?.Invoke(string.Empty);
+                KickCampaignChanged?.Invoke(string.Empty, null);
+                _lastKickDropId = null;
+                KickDropChanged?.Invoke(string.Empty, null);
                 KickProgressChanged?.Invoke(0, 0);
                 _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
                 _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
@@ -674,18 +691,36 @@ namespace Core.Managers
                         await Task.Delay(5000);
 
                         _currentTwitchCampaign = bestTwitch;
-                        bool twitchOnline = await IsTwitchStreamOnline();
-                        bool twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
+
+                        // Prefer the authoritative GQL check (live + correct category) over fragile DOM
+                        // scraping; only fall back to DOM when GQL cannot determine the result.
+                        string twitchLogin = GetStreamerNameFromUrl(twitchUrl);
+                        bool? gqlEligible = await IsTwitchStreamEligibleViaGqlAsync(twitchLogin, bestTwitch.Slug);
+
+                        bool twitchOnline;
+                        bool twitchCorrectCategory;
+                        if (gqlEligible.HasValue)
+                        {
+                            twitchOnline = gqlEligible.Value;
+                            twitchCorrectCategory = gqlEligible.Value;
+                        }
+                        else
+                        {
+                            twitchOnline = await IsTwitchStreamOnline();
+                            twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
+                        }
 
                         if (!twitchOnline || !twitchCorrectCategory)
                         {
                             AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' failed streamer eligibility. online={twitchOnline}, categoryOk={twitchCorrectCategory}");
                             _currentTwitchCampaign = null;
+                            _currentTwitchLogin = null;
                             UpdateCurrentSelectionFlags();
                             remainingTwitchCampaigns.Remove(bestTwitch);
                             continue;
                         }
 
+                        _currentTwitchLogin = twitchLogin;
                         _lastKnownTwitchOnlineState = true;
                         UpdateCurrentSelectionFlags();
 
@@ -717,6 +752,7 @@ namespace Core.Managers
                         byte initialTwitchPct = CalculateLiveCampaignProgress(bestTwitch);
                         byte initialTwitchDropPct = CalculateLiveDropProgress(bestTwitch, _twitchDropWatchedSeconds);
                         TwitchProgressChanged?.Invoke(initialTwitchPct, initialTwitchDropPct);
+                        RaiseTwitchDropChangedIfNeeded(nextTwitchReward);
 
                         AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Watching Twitch stream: {twitchUrl}");
                         AppLogger.Info("TwitchSelection", $"Selected Twitch stream '{twitchUrl}' for campaign '{bestTwitch.Name}' ({bestTwitch.Id}).");
@@ -815,6 +851,7 @@ namespace Core.Managers
                         byte initialKickPct = CalculateLiveCampaignProgress(bestKick);
                         byte initialKickDropPct = CalculateLiveDropProgress(bestKick, _kickDropWatchedSeconds);
                         KickProgressChanged?.Invoke(initialKickPct, initialKickDropPct);
+                        RaiseKickDropChangedIfNeeded(nextKickReward);
 
                         AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Watching Kick stream: {kickUrl}");
                         AppLogger.Info("KickSelection", $"Selected Kick stream '{kickUrl}' for campaign '{bestKick.Name}' ({bestKick.Id}).");
@@ -1002,8 +1039,28 @@ namespace Core.Managers
                 // Run the entire check on the UI thread
                 await await Application.Current.Dispatcher.InvokeAsync(async () =>
                 {
-                    bool twitchOnline = _currentTwitchCampaign != null && await IsTwitchStreamOnline();
-                    bool twitchCorrectCategory = _currentTwitchCampaign != null && await IsTwitchStreamCategoryCorrect();
+                    bool twitchOnline;
+                    bool twitchCorrectCategory;
+                    if (_currentTwitchCampaign == null)
+                    {
+                        twitchOnline = false;
+                        twitchCorrectCategory = false;
+                    }
+                    else
+                    {
+                        // Prefer authoritative GQL (live + category); fall back to DOM if unavailable.
+                        bool? gqlEligible = await IsTwitchStreamEligibleViaGqlAsync(_currentTwitchLogin, _currentTwitchCampaign.Slug);
+                        if (gqlEligible.HasValue)
+                        {
+                            twitchOnline = gqlEligible.Value;
+                            twitchCorrectCategory = gqlEligible.Value;
+                        }
+                        else
+                        {
+                            twitchOnline = await IsTwitchStreamOnline();
+                            twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
+                        }
+                    }
                     bool twitchShowingAd = _currentTwitchCampaign != null && await IsTwitchShowingAd();
                     bool kickOnline = _currentKickCampaign != null && await IsKickStreamOnline();
                     bool kickCorrectCategory = _currentKickCampaign != null && await IsKickStreamCategoryCorrect();
@@ -1293,6 +1350,55 @@ namespace Core.Managers
         /// <see langword="false"/>.</remarks>
         /// <returns>A task that represents the asynchronous operation. The task result is <see langword="true"/> if the Twitch
         /// stream is live; otherwise, <see langword="false"/>.</returns>
+        /// <summary>
+        /// Raises <see cref="TwitchDropChanged"/> only when the targeted reward changes, to avoid per-tick spam.
+        /// </summary>
+        private void RaiseTwitchDropChangedIfNeeded(DropsReward? reward)
+        {
+            if (reward?.Id == _lastTwitchDropId)
+                return;
+
+            _lastTwitchDropId = reward?.Id;
+            TwitchDropChanged?.Invoke(reward?.Name ?? string.Empty, reward?.ImageUrl);
+        }
+
+        /// <summary>
+        /// Raises <see cref="KickDropChanged"/> only when the targeted reward changes, to avoid per-tick spam.
+        /// </summary>
+        private void RaiseKickDropChangedIfNeeded(DropsReward? reward)
+        {
+            if (reward?.Id == _lastKickDropId)
+                return;
+
+            _lastKickDropId = reward?.Id;
+            KickDropChanged?.Invoke(reward?.Name ?? string.Empty, reward?.ImageUrl);
+        }
+
+        /// <summary>
+        /// Authoritatively checks whether a Twitch streamer is live AND streaming the expected category,
+        /// using the GraphQL API instead of fragile DOM scraping. Returns <c>null</c> when the check could
+        /// not be performed (no GQL service, no login, no slug, or a transient error), so the caller can
+        /// fall back to the DOM-based checks.
+        /// </summary>
+        private async Task<bool?> IsTwitchStreamEligibleViaGqlAsync(string? login, string? slug)
+        {
+            if (_twitchGqlService == null || string.IsNullOrWhiteSpace(login) || string.IsNullOrWhiteSpace(slug))
+                return null;
+
+            try
+            {
+                List<string> liveMatches = await _twitchGqlService.QueryLiveChannelsBySlugAsync(new[] { login }, slug);
+                bool eligible = liveMatches.Any(l => string.Equals(l, login, StringComparison.OrdinalIgnoreCase));
+                AppLogger.Debug("TwitchSelection", $"[GQL eligibility] login={login}, slug={slug} -> {eligible}");
+                return eligible;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("TwitchSelection", $"GQL eligibility check failed for '{login}' (slug={slug}); falling back to DOM. {ex.Message}");
+                return null;
+            }
+        }
+
         private async Task<bool> IsTwitchStreamOnline()
         {
             if (TwitchWebView == null)
@@ -1528,6 +1634,7 @@ namespace Core.Managers
             if (!string.IsNullOrWhiteSpace(streamerUrl))
             {
                 KickChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
+                KickCampaignChanged?.Invoke(campaign.Name, campaign.GameImageUrl);
                 AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Selected Kick streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
             }
             else
@@ -1601,26 +1708,12 @@ namespace Core.Managers
                     }
                     else
                     {
-                        AppLogger.Info("TwitchSelection", $"Batch GQL found {liveLogins.Count} live streamers for '{campaign.Name}'. Trying in order.");
-
-                        foreach (string login in liveLogins)
-                        {
-                            string url = $"https://www.twitch.tv/{login}";
-
-                            await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(url));
-                            await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.WaitForNetworkIdleAsync(5000, 500));
-
-                            string categoryHrefResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ExecuteScriptAsync(getStreamerCategoryHrefJs));
-
-                            if (TwitchCategoryHrefMatchesCampaign(categoryHrefResult, campaign.Slug))
-                            {
-                                streamerUrl = url;
-                                AppLogger.Info("TwitchSelection", $"Batch GQL streamer accepted for campaign '{campaign.Name}': {url}");
-                                break;
-                            }
-
-                            AppLogger.Warn("TwitchSelection", $"Batch GQL streamer category mismatch for '{campaign.Name}': {url}");
-                        }
+                        // QueryLiveChannelsBySlug already guarantees each login is live AND in the
+                        // correct category (server-side), so accept the first one directly instead of
+                        // navigating and re-checking via fragile DOM scraping (which rejected valid streamers).
+                        string acceptedLogin = liveLogins[0];
+                        streamerUrl = $"https://www.twitch.tv/{acceptedLogin}";
+                        AppLogger.Info("TwitchSelection", $"Batch GQL streamer accepted for campaign '{campaign.Name}': {streamerUrl} (live+category confirmed via GQL; {liveLogins.Count} candidates).");
                     }
                 }
                 else
@@ -1709,6 +1802,7 @@ namespace Core.Managers
             if (!string.IsNullOrWhiteSpace(streamerUrl))
             {
                 TwitchChannelChanged?.Invoke(GetStreamerNameFromUrl(streamerUrl));
+                TwitchCampaignChanged?.Invoke(campaign.Name, campaign.GameImageUrl);
                 AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Selected Twitch streamer URL for general campaign '{campaign.Name}': {streamerUrl}");
             }
             else
