@@ -23,6 +23,15 @@ namespace UI.Views
         public HiddenWebViewHost()
         {
             InitializeComponent();
+
+            if (!App.IsDebugMode)
+            {
+                WindowStyle = WindowStyle.None;
+                ShowInTaskbar = false;
+                ShowActivated = false;
+                Top = -20000;
+                Left = -20000;
+            }
         }
 
         /// <summary>
@@ -322,7 +331,7 @@ namespace UI.Views
 
                             if (body.Contains("claimed") || body.Contains("progress_units") || body.Contains("rewards"))
                             {
-                                AppLogger.Debug("WebViewCapture", $"[Kick Progress] SUCCESS - REAL RESPONSE CAPTURED ({body.Length} chars)");
+                                AppLogger.Debug("WebViewCapture", $"[Kick Progress] SUCCESS - RESPONSE CAPTURED ({body.Length} chars)");
                                 responseReceived.DevToolsProtocolEventReceived -= Handler;
                                 tcs.TrySetResult(body);
                             }

@@ -13,6 +13,8 @@ namespace UI
     /// </summary>
     public partial class App : System.Windows.Application
     {
+        public static bool IsDebugMode { get; private set; }
+
         private const string RegistryKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
         private const string RegistryValueName = "AppsUseLightTheme";
 
@@ -33,6 +35,7 @@ namespace UI
         protected override void OnStartup(StartupEventArgs e)
         {
             AppLogger.Initialize();
+
             // Log app startup + Version
             AppLogger.Info("App", $"Starting StreamDropCollector version {GetType().Assembly.GetName().Version}");
 
@@ -50,6 +53,8 @@ namespace UI
             }
 
             base.OnStartup(e);
+
+            IsDebugMode = e.Args.Contains("-debug");
 
             Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
