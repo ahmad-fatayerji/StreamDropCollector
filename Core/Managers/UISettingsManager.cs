@@ -41,6 +41,8 @@ namespace Core.Managers
         private MiningPriorityMode _miningPriorityMode = MiningPriorityMode.AvailabilityThenProgress;
         private List<string> _twitchGameWhitelistSlugs = new List<string>();
         private List<string> _kickGameWhitelistSlugs = new List<string>();
+        private bool _twitchGameFilterBlacklistMode;
+        private bool _kickGameFilterBlacklistMode;
         private bool _isUpdatingGameFilterOptions;
         private bool _isLoadingSettings;
 
@@ -228,14 +230,50 @@ namespace Core.Managers
 
         public string TwitchWhitelistSummary => _twitchGameWhitelistSlugs.Count == 0
             ? "All active Twitch games are allowed"
-            : $"{_twitchGameWhitelistSlugs.Count} Twitch game(s) selected";
+            : _twitchGameFilterBlacklistMode
+                ? $"Excluding {_twitchGameWhitelistSlugs.Count} Twitch game(s)"
+                : $"{_twitchGameWhitelistSlugs.Count} Twitch game(s) selected";
 
         public string KickWhitelistSummary => _kickGameWhitelistSlugs.Count == 0
             ? "All active Kick games are allowed"
-            : $"{_kickGameWhitelistSlugs.Count} Kick game(s) selected";
+            : _kickGameFilterBlacklistMode
+                ? $"Excluding {_kickGameWhitelistSlugs.Count} Kick game(s)"
+                : $"{_kickGameWhitelistSlugs.Count} Kick game(s) selected";
 
         public IReadOnlyList<string> TwitchGameWhitelistSlugs => _twitchGameWhitelistSlugs.AsReadOnly();
         public IReadOnlyList<string> KickGameWhitelistSlugs => _kickGameWhitelistSlugs.AsReadOnly();
+
+        /// <summary>
+        /// When true, the selected Twitch games are excluded (mine everything else) instead of being an allow-list.
+        /// </summary>
+        public bool TwitchGameFilterBlacklistMode
+        {
+            get => _twitchGameFilterBlacklistMode;
+            set
+            {
+                if (SetField(ref _twitchGameFilterBlacklistMode, value))
+                {
+                    OnPropertyChanged(nameof(TwitchWhitelistSummary));
+                    GameWhitelistChanged?.Invoke(Platform.Twitch);
+                }
+            }
+        }
+
+        /// <summary>
+        /// When true, the selected Kick games are excluded (mine everything else) instead of being an allow-list.
+        /// </summary>
+        public bool KickGameFilterBlacklistMode
+        {
+            get => _kickGameFilterBlacklistMode;
+            set
+            {
+                if (SetField(ref _kickGameFilterBlacklistMode, value))
+                {
+                    OnPropertyChanged(nameof(KickWhitelistSummary));
+                    GameWhitelistChanged?.Invoke(Platform.Kick);
+                }
+            }
+        }
 
         private UISettingsManager()
         {
@@ -369,6 +407,8 @@ namespace Core.Managers
                     _lastUpdateCheck = settings.LastUpdateCheck;
                     _twitchGameWhitelistSlugs = NormalizeWhitelist(settings.TwitchGameWhitelistSlugs);
                     _kickGameWhitelistSlugs = NormalizeWhitelist(settings.KickGameWhitelistSlugs);
+                    _twitchGameFilterBlacklistMode = settings.TwitchGameFilterBlacklistMode;
+                    _kickGameFilterBlacklistMode = settings.KickGameFilterBlacklistMode;
                 }
             }
             catch (Exception ex) when (ex is JsonException || ex is IOException || ex is UnauthorizedAccessException)
@@ -411,7 +451,9 @@ namespace Core.Managers
                     NotifyOnNewUpdateAvailable = NotifyOnNewUpdateAvailable,
                     LastUpdateCheck = _lastUpdateCheck,
                     TwitchGameWhitelistSlugs = [.. _twitchGameWhitelistSlugs],
-                    KickGameWhitelistSlugs = [.. _kickGameWhitelistSlugs]
+                    KickGameWhitelistSlugs = [.. _kickGameWhitelistSlugs],
+                    TwitchGameFilterBlacklistMode = _twitchGameFilterBlacklistMode,
+                    KickGameFilterBlacklistMode = _kickGameFilterBlacklistMode
                 };
 
                 string json = JsonSerializer.Serialize(settings, _jsonOptions);
@@ -584,11 +626,20 @@ namespace Core.Managers
                 ? _twitchGameWhitelistSlugs
                 : _kickGameWhitelistSlugs;
 
+            // No games selected => allow everything (regardless of mode).
             if (whitelist.Count == 0)
                 return true;
 
             string slug = campaign.Slug?.Trim().ToLowerInvariant() ?? string.Empty;
-            return whitelist.Contains(slug, StringComparer.OrdinalIgnoreCase);
+            bool inList = whitelist.Contains(slug, StringComparer.OrdinalIgnoreCase);
+
+            bool excludeMode = campaign.Platform == Platform.Twitch
+                ? _twitchGameFilterBlacklistMode
+                : _kickGameFilterBlacklistMode;
+
+            // Exclude mode: allow everything EXCEPT the selected games.
+            // Allow mode: allow ONLY the selected games.
+            return excludeMode ? !inList : inList;
         }
 
         private void RebuildOptionsCollection(

@@ -19,5 +19,7 @@ namespace Core.Models
         public MiningPriorityMode MiningPriorityMode { get; set; } = MiningPriorityMode.AvailabilityThenProgress;
         public List<string> TwitchGameWhitelistSlugs { get; set; } = new List<string>();
         public List<string> KickGameWhitelistSlugs { get; set; } = new List<string>();
+        public bool TwitchGameFilterBlacklistMode { get; set; }
+        public bool KickGameFilterBlacklistMode { get; set; }
     }
 }

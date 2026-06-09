@@ -392,6 +392,10 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Border>
+                        <CheckBox Content="Blacklist selected games (mine everything except these)"
+                                  IsChecked="{Binding TwitchGameFilterBlacklist, Mode=TwoWay}"
+                                  Style="{StaticResource ModernCheckBoxStyle}"
+                                  Margin="0,0,0,8"/>
                         <Button Content="Clear Twitch whitelist"
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Left"
@@ -420,6 +424,10 @@
                                 </ListBox.ItemTemplate>
                             </ListBox>
                         </Border>
+                        <CheckBox Content="Blacklist selected games (mine everything except these)"
+                                  IsChecked="{Binding KickGameFilterBlacklist, Mode=TwoWay}"
+                                  Style="{StaticResource ModernCheckBoxStyle}"
+                                  Margin="0,0,0,8"/>
                         <Button Content="Clear Kick whitelist"
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Left"
