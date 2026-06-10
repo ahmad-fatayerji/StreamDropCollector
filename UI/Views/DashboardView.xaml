@@ -101,13 +101,11 @@
                        Foreground="{DynamicResource TextPrimaryBrush}"
                        FontSize="16"/>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
-                       Visibility="{Binding TwitchCampaignName, Converter={StaticResource StringToVisibilityConverter}}">
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0" Visibility="{Binding TwitchCampaignName, Converter={StaticResource StringToVisibilityConverter}}">
                         <Border Width="32" Height="42" CornerRadius="4" ClipToBounds="True"
                                 Background="{DynamicResource MainBackgroundBrush}" Margin="0,0,8,0"
                                 Visibility="{Binding TwitchCampaignImageUrl, Converter={StaticResource StringToVisibilityConverter}}">
-                            <Image local:ImageEx.SourceUrl="{Binding TwitchCampaignImageUrl}"
-                                   Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <Image local:ImageEx.SourceUrl="{Binding TwitchCampaignImageUrl}" Stretch="UniformToFill"/>
                         </Border>
                         <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                             <Run Text="Campaign: " Foreground="{DynamicResource TextSecondaryBrush}"/>
@@ -131,13 +129,11 @@
                        Foreground="{DynamicResource TextPrimaryBrush}"
                        FontSize="16"/>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
-                       Visibility="{Binding TwitchDropName, Converter={StaticResource StringToVisibilityConverter}}">
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0" Visibility="{Binding TwitchDropName, Converter={StaticResource StringToVisibilityConverter}}">
                         <Border Width="32" Height="32" CornerRadius="4" ClipToBounds="True"
                                 Background="{DynamicResource MainBackgroundBrush}" Margin="0,0,8,0"
                                 Visibility="{Binding TwitchDropImageUrl, Converter={StaticResource StringToVisibilityConverter}}">
-                            <Image local:ImageEx.SourceUrl="{Binding TwitchDropImageUrl}"
-                                   Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <Image local:ImageEx.SourceUrl="{Binding TwitchDropImageUrl}" Stretch="UniformToFill"/>
                         </Border>
                         <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                             <Run Text="Item: " Foreground="{DynamicResource TextSecondaryBrush}"/>
@@ -177,13 +173,11 @@
                        Foreground="{DynamicResource TextSecondaryBrush}"
                        FontSize="16"/>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
-                       Visibility="{Binding KickCampaignName, Converter={StaticResource StringToVisibilityConverter}}">
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0" Visibility="{Binding KickCampaignName, Converter={StaticResource StringToVisibilityConverter}}">
                         <Border Width="32" Height="42" CornerRadius="4" ClipToBounds="True"
                                 Background="{DynamicResource MainBackgroundBrush}" Margin="0,0,8,0"
                                 Visibility="{Binding KickCampaignImageUrl, Converter={StaticResource StringToVisibilityConverter}}">
-                            <Image local:ImageEx.SourceUrl="{Binding KickCampaignImageUrl}"
-                                   Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <Image local:ImageEx.SourceUrl="{Binding KickCampaignImageUrl}" Stretch="UniformToFill"/>
                         </Border>
                         <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                             <Run Text="Campaign: " Foreground="{DynamicResource TextSecondaryBrush}"/>
@@ -207,13 +201,11 @@
                        Foreground="{DynamicResource TextPrimaryBrush}"
                        FontSize="16"/>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
-                       Visibility="{Binding KickDropName, Converter={StaticResource StringToVisibilityConverter}}">
+                    <StackPanel Orientation="Horizontal" Margin="0,6,0,0" Visibility="{Binding KickDropName, Converter={StaticResource StringToVisibilityConverter}}">
                         <Border Width="32" Height="32" CornerRadius="4" ClipToBounds="True"
                                 Background="{DynamicResource MainBackgroundBrush}" Margin="0,0,8,0"
                                 Visibility="{Binding KickDropImageUrl, Converter={StaticResource StringToVisibilityConverter}}">
-                            <Image local:ImageEx.SourceUrl="{Binding KickDropImageUrl}"
-                                   Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <Image local:ImageEx.SourceUrl="{Binding KickDropImageUrl}" Stretch="UniformToFill"/>
                         </Border>
                         <TextBlock VerticalAlignment="Center" TextTrimming="CharacterEllipsis">
                             <Run Text="Item: " Foreground="{DynamicResource TextSecondaryBrush}"/>
