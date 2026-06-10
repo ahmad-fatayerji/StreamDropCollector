@@ -98,7 +98,7 @@ namespace Core.Services
                     bool general = false;
 
                     // Category-less campaigns (e.g. Watch ANYONE, in any category)
-                    if (category.ValueKind == JsonValueKind.Undefined)
+                    if (category.ValueKind == JsonValueKind.Undefined && connectUrls.Count == 0)
                     {
                         connectUrls.Add("https://kick.com/browse?sort=viewers_high_to_low");
                         general = true;
