@@ -1603,15 +1603,14 @@ namespace Core.Managers
                     }
                 }
 
-                // Step 2: If no valid remembered → navigate category directory → extract first streamer via your JS
+                // Step 2: If no valid remembered → navigate category directory → extract first streamer via JS
                 if (string.IsNullOrWhiteSpace(streamerUrl) && campaign.ConnectUrls?.Any() == true)
                 {
                     string directoryUrl = campaign.ConnectUrls[0];  // category page with live list
 
                     AppLogger.Info("KickSelection", $"Falling back to category directory for general campaign '{campaign.Name}': {directoryUrl}");
 
-                    await await Application.Current.Dispatcher.InvokeAsync(async () =>
-                        await KickWebView!.NavigateAsync(directoryUrl));
+                    await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(directoryUrl));
 
                     await Task.Delay(1500);  // Again - consider WaitForNetworkIdleAsync if needed
 
@@ -1832,7 +1831,7 @@ namespace Core.Managers
         }
         private static bool KickCategoryHrefMatchesCampaign(string? rawCategoryHrefs, string? campaignSlug)
         {
-            if (string.IsNullOrWhiteSpace(rawCategoryHrefs))
+            if (string.IsNullOrWhiteSpace(rawCategoryHrefs) || rawCategoryHrefs == "null")
                 return false;
             else if (string.IsNullOrWhiteSpace(campaignSlug))
                 return true;
