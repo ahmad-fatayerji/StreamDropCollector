@@ -5,8 +5,8 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<UseWPF>true</UseWPF>
-		<AssemblyVersion>1.0.19.0</AssemblyVersion>
-		<FileVersion>1.0.19</FileVersion>
+		<FileVersion>1.0.20</FileVersion>
+		<Copyright>tsgsOFFICIAL</Copyright>
 	</PropertyGroup>
 
 	<ItemGroup>

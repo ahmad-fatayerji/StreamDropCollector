@@ -1565,7 +1565,7 @@ namespace Core.Managers
             {
                 // NON-GENERAL DROPS
                 IEnumerable<string> orderedConnectUrls = campaign.ConnectUrls;
-                if (!string.IsNullOrWhiteSpace(rememberedKickUrl))
+                if (!string.IsNullOrWhiteSpace(rememberedKickUrl) && campaign.ConnectUrls.Contains(rememberedKickUrl))
                 {
                     orderedConnectUrls = new[] { rememberedKickUrl! }
                         .Concat(campaign.ConnectUrls)
@@ -1699,7 +1699,7 @@ namespace Core.Managers
             if (!campaign.IsGeneralDrop)
             {
                 IEnumerable<string> orderedConnectUrls = campaign.ConnectUrls;
-                if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl))
+                if (!string.IsNullOrWhiteSpace(rememberedTwitchUrl) && campaign.ConnectUrls.Contains(rememberedTwitchUrl))
                 {
                     orderedConnectUrls = new[] { rememberedTwitchUrl! }
                         .Concat(campaign.ConnectUrls)
