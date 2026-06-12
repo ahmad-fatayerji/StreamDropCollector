@@ -1,8 +1,13 @@
 {
-  "version": "1.0.20",
-  "type": "Optimization",
-  "changelog": "Bug fixes and performance optimizations.",
+  "version": "1.0.21",
+  "type": "Patch",
+  "changelog": "More bug fixes.",
   "historic_versions": [
+    {
+      "version": "1.0.20",
+      "type": "Optimization",
+      "changelog": "Bug fixes and performance optimizations."
+    },
     {
       "version": "1.0.19",
       "type": "Optimization",

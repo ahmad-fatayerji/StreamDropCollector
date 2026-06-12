@@ -551,6 +551,7 @@ namespace Core.Managers
 
                 // Immediately stop the live progress timer to prevent ticks during unstable state
                 _liveProgressTimer?.Stop();
+                List<DropsCampaign> campaignSnapshot = Application.Current.Dispatcher.Invoke(() => ActiveCampaigns.ToList());
 
                 // Reset current selections and progress
                 TwitchChannelChanged?.Invoke(string.Empty);
@@ -584,7 +585,7 @@ namespace Core.Managers
                 _recheckTimer = null;
                 _streamHealthTimer = null;
 
-                if (!ActiveCampaigns.Any())
+                if (!campaignSnapshot.Any())
                 {
                     AppLogger.Debug("Miner", "[DropsInventoryManager] No active campaigns with progress to make. Stopping stream watching.");
                     AppLogger.Info("Miner", "No active campaigns found during start; switching to Idle.");
@@ -601,13 +602,13 @@ namespace Core.Managers
                 DateTime nextCheckAt = DateTime.Now.AddHours(1); // Fallback: recheck in 1 hour
 
                 // Get a list of ready to claim rewards
-                List<DropsReward> readyToClaimRewards = [.. ActiveCampaigns.SelectMany(c => c.Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes >= r.RequiredMinutes))];
+                List<DropsReward> readyToClaimRewards = [.. campaignSnapshot.SelectMany(c => c.Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes >= r.RequiredMinutes))];
 
                 if (UISettingsManager.Instance.AutoClaimRewards)
                 {
                     foreach (DropsReward item in readyToClaimRewards)
                     {
-                        DropsCampaign? parentCampaign = ActiveCampaigns.FirstOrDefault(c => c.Rewards.Contains(item));
+                        DropsCampaign? parentCampaign = campaignSnapshot.FirstOrDefault(c => c.Rewards.Contains(item));
                         if (parentCampaign == null)
                             continue;
 
@@ -644,7 +645,7 @@ namespace Core.Managers
                     NotificationManager.ShowNotification("Drop Ready to Claim", $"You have {readyToClaimRewards.Count} drops rewards ready to claim. Please claim them manually.");
                 }
 
-                List<DropsCampaign> snapshot = [.. ActiveCampaigns];
+                List<DropsCampaign> snapshot = campaignSnapshot;
                 List<DropsCampaign> readyToClaimOnlyCampaigns = snapshot
                     .Where(c => c.HasReadyToClaimRewards() && !c.HasProgressToMake())
                     .ToList();
