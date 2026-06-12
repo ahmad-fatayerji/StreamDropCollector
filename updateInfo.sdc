@@ -1,8 +1,13 @@
 {
-  "version": "1.0.18",
-  "type": "Feature",
-  "changelog": "Added missing Kick campaigns for site wide drops & big improvements on Twitch drops loading + Image caching for all sites.",
+  "version": "1.0.19",
+  "type": "Optimization",
+  "changelog": "Bug fixes and performance optimizations.",
   "historic_versions": [
+    {
+      "version": "1.0.18",
+      "type": "Feature",
+      "changelog": "Added missing Kick campaigns for site wide drops & big improvements on Twitch drops loading + Image caching for all sites."
+    },
     {
       "version": "1.0.17",
       "type": "Patch",
