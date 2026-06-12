@@ -410,7 +410,7 @@ namespace Core.Managers
                     .ToList();
 
                 // Materialize before iterating to avoid deferred execution issues
-                var activeCampaignsList = filteredCampaigns
+                List<DropsCampaign> activeCampaignsList = filteredCampaigns
                     .Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now)
                     .OrderBy(x => x.Platform)
                     .ThenBy(x => x.GameName)
@@ -645,8 +645,17 @@ namespace Core.Managers
                 }
 
                 List<DropsCampaign> snapshot = [.. ActiveCampaigns];
+                List<DropsCampaign> readyToClaimOnlyCampaigns = snapshot
+                    .Where(c => c.HasReadyToClaimRewards() && !c.HasProgressToMake())
+                    .ToList();
+
                 if (!snapshot.Any(c => c.HasProgressToMake()))
                 {
+                    if (readyToClaimOnlyCampaigns.Any())
+                    {
+                        AppLogger.Info("Miner", $"No remaining watch progress remains; {readyToClaimOnlyCampaigns.Count} campaign(s) are waiting for manual claim.");
+                    }
+
                     AppLogger.Debug("Miner", "[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
                     AppLogger.Info("Miner", "No campaigns with progress after claim pass; switching to Idle.");
                     MinerStatusChanged?.Invoke("Idle");
@@ -2053,15 +2062,27 @@ namespace Core.Managers
     {
         /// <summary>
         /// Determines whether the specified campaign contains any rewards that have not yet been claimed and still
-        /// require additional progress.
+        /// require additional watch progress.
         /// </summary>
         /// <param name="campaign">The campaign to evaluate for unclaimed rewards with remaining progress requirements. Cannot be null.</param>
-        /// <returns>true if at least one reward in the campaign is unclaimed and has not reached its required progress;
+        /// <returns>true if at least one reward in the campaign is unclaimed and still has progress remaining;
         /// otherwise, false.</returns>
         public static bool HasProgressToMake(this DropsCampaign campaign)
         {
-            return campaign.Rewards.Any(r => !r.IsClaimed);
+            return campaign.Rewards.Any(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes);
         }
+
+        /// <summary>
+        /// Determines whether the specified campaign contains any rewards that are fully progressed and waiting to be claimed.
+        /// </summary>
+        /// <param name="campaign">The campaign to evaluate for ready-to-claim rewards. Cannot be null.</param>
+        /// <returns>true if at least one unclaimed reward in the campaign has met or exceeded its required progress;
+        /// otherwise, false.</returns>
+        public static bool HasReadyToClaimRewards(this DropsCampaign campaign)
+        {
+            return campaign.Rewards.Any(r => !r.IsClaimed && r.ProgressMinutes >= r.RequiredMinutes);
+        }
+
         /// <summary>
         /// Calculates the overall completion percentage of all rewards in the specified campaign that require progress.
         /// </summary>
