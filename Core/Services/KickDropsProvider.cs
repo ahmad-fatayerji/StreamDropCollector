@@ -98,7 +98,7 @@ namespace Core.Services
                     bool general = false;
 
                     // Category-less campaigns (e.g. Watch ANYONE, in any category)
-                    if (category.ValueKind == JsonValueKind.Undefined)
+                    if (category.ValueKind == JsonValueKind.Undefined && connectUrls.Count == 0)
                     {
                         connectUrls.Add("https://kick.com/browse?sort=viewers_high_to_low");
                         general = true;
@@ -153,55 +153,63 @@ namespace Core.Services
 
                 // 2. Get progress + claimed status
                 string rawProgress = string.Empty;
+                const int maxProgressAttempts = 3;
 
-                while (string.IsNullOrEmpty(rawProgress))
+                for (int attempt = 1; attempt <= maxProgressAttempts && string.IsNullOrEmpty(rawProgress); attempt++)
+                {
                     try
                     {
                         rawProgress = await host.CaptureProgressResponseAsync(10000, ct);
                     }
                     catch (TimeoutException ex)
                     {
-                        AppLogger.Warn("KickDrops", $"Progress capture timed out; forcing refresh and retrying. {ex.Message}");
-                        await host.ForceRefreshAsync();
+                        bool willRetry = attempt < maxProgressAttempts;
+                        AppLogger.Warn("KickDrops", $"Progress capture timed out (attempt {attempt}/{maxProgressAttempts}); {(willRetry ? "forcing refresh and retrying." : "continuing without progress.")} {ex.Message}");
+                        if (willRetry)
+                            await host.ForceRefreshAsync();
                     }
+                }
 
-                // 3. Merge progress into campaigns
-                JsonDocument progressDoc = JsonDocument.Parse(rawProgress);
-
-                if (progressDoc.RootElement.TryGetProperty("data", out JsonElement progressArray))
+                // 3. Merge progress into campaigns (skip if no payload was captured).
+                if (!string.IsNullOrEmpty(rawProgress))
                 {
-                    foreach (JsonElement item in progressArray.EnumerateArray())
+                    using JsonDocument progressDoc = JsonDocument.Parse(rawProgress);
+
+                    if (progressDoc.RootElement.TryGetProperty("data", out JsonElement progressArray))
                     {
-                        string campaignId = item.GetProperty("id").GetString()!;
-
-                        foreach (JsonElement reward in item.GetProperty("rewards").EnumerateArray())
+                        foreach (JsonElement item in progressArray.EnumerateArray())
                         {
-                            string rewardId = reward.GetProperty("id").GetString()!;
+                            string campaignId = item.GetProperty("id").GetString()!;
 
-                            DropsCampaign? campaign = campaigns.FirstOrDefault(c => c.Id == campaignId);
-                            if (campaign == null)
-                                continue;
-
-                            DropsReward? targetReward = campaign.Rewards.FirstOrDefault(r => r.Id == rewardId);
-                            if (targetReward == null)
-                                continue;
-
-                            // UPDATE IN-PLACE
-                            targetReward = targetReward with
+                            foreach (JsonElement reward in item.GetProperty("rewards").EnumerateArray())
                             {
-                                ProgressMinutes = Math.Min(item.GetProperty("progress_units").GetInt32(), targetReward.RequiredMinutes),
-                                IsClaimed = reward.GetProperty("claimed").GetBoolean()
-                            };
+                                string rewardId = reward.GetProperty("id").GetString()!;
 
-                            // Replace in list (records are immutable)
-                            List<DropsReward> list = [.. campaign.Rewards];
-                            int index = list.IndexOf(campaign.Rewards.First(r => r.Id == rewardId));
-                            list[index] = targetReward;
+                                DropsCampaign? campaign = campaigns.FirstOrDefault(c => c.Id == campaignId);
+                                if (campaign == null)
+                                    continue;
 
-                            // Replace in campaign
-                            DropsCampaign updatedCampaign = campaign with { Rewards = list.AsReadOnly() };
-                            int campIndex = campaigns.IndexOf(campaign);
-                            campaigns[campIndex] = updatedCampaign;
+                                DropsReward? targetReward = campaign.Rewards.FirstOrDefault(r => r.Id == rewardId);
+                                if (targetReward == null)
+                                    continue;
+
+                                // UPDATE IN-PLACE
+                                targetReward = targetReward with
+                                {
+                                    ProgressMinutes = Math.Min(item.GetProperty("progress_units").GetInt32(), targetReward.RequiredMinutes),
+                                    IsClaimed = reward.GetProperty("claimed").GetBoolean()
+                                };
+
+                                // Replace in list (records are immutable)
+                                List<DropsReward> list = [.. campaign.Rewards];
+                                int index = list.IndexOf(campaign.Rewards.First(r => r.Id == rewardId));
+                                list[index] = targetReward;
+
+                                // Replace in campaign
+                                DropsCampaign updatedCampaign = campaign with { Rewards = list.AsReadOnly() };
+                                int campIndex = campaigns.IndexOf(campaign);
+                                campaigns[campIndex] = updatedCampaign;
+                            }
                         }
                     }
                 }

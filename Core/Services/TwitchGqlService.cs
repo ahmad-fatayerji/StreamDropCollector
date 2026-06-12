@@ -23,6 +23,7 @@ namespace Core.Services
         private string? _userId;
         private readonly object _hashCacheSync = new();
         private readonly Dictionary<string, GqlHashCacheEntry> _gqlHashCache = new(StringComparer.OrdinalIgnoreCase);
+        private static readonly TimeSpan _gqlHashCacheFreshnessThreshold = TimeSpan.FromHours(24);
 
         private static readonly string _gqlHashCacheFilePath = Path.Combine(
             Environment.ExpandEnvironmentVariables("%APPDATA%"),
@@ -666,9 +667,20 @@ namespace Core.Services
                     return false;
                 }
 
+                if (requireFresh && !IsCacheEntryFresh(entry))
+                {
+                    hash = null;
+                    return false;
+                }
+
                 hash = entry.Hash;
                 return true;
             }
+        }
+
+        private static bool IsCacheEntryFresh(GqlHashCacheEntry entry)
+        {
+            return DateTimeOffset.UtcNow - entry.UpdatedUtc <= _gqlHashCacheFreshnessThreshold;
         }
 
         private void SetCachedHash(string operationName, string hash)

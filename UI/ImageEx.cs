@@ -207,8 +207,8 @@ namespace UI
             {
                 DateTime cutoff = DateTime.UtcNow - EvictionAge;
 
-                // Memory eviction
-                foreach (string key in _memoryCache.Keys)
+                // Memory eviction - materialize keys to avoid "collection modified" error
+                foreach (string key in _memoryCache.Keys.ToList())
                 {
                     if (_memoryCache.TryGetValue(key, out MemoryCacheEntry? entry) &&
                         entry.LastAccessed < cutoff)

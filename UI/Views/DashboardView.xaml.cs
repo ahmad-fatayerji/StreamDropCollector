@@ -166,6 +166,86 @@ namespace UI.Views
                 OnPropertyChanged();
             }
         }
+        private string _twitchCampaignName = string.Empty;
+        public string TwitchCampaignName
+        {
+            get => _twitchCampaignName;
+            set
+            {
+                _twitchCampaignName = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _kickCampaignName = string.Empty;
+        public string KickCampaignName
+        {
+            get => _kickCampaignName;
+            set
+            {
+                _kickCampaignName = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _twitchCampaignImageUrl = string.Empty;
+        public string TwitchCampaignImageUrl
+        {
+            get => _twitchCampaignImageUrl;
+            set
+            {
+                _twitchCampaignImageUrl = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _kickCampaignImageUrl = string.Empty;
+        public string KickCampaignImageUrl
+        {
+            get => _kickCampaignImageUrl;
+            set
+            {
+                _kickCampaignImageUrl = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _twitchDropName = string.Empty;
+        public string TwitchDropName
+        {
+            get => _twitchDropName;
+            set
+            {
+                _twitchDropName = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _twitchDropImageUrl = string.Empty;
+        public string TwitchDropImageUrl
+        {
+            get => _twitchDropImageUrl;
+            set
+            {
+                _twitchDropImageUrl = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _kickDropName = string.Empty;
+        public string KickDropName
+        {
+            get => _kickDropName;
+            set
+            {
+                _kickDropName = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _kickDropImageUrl = string.Empty;
+        public string KickDropImageUrl
+        {
+            get => _kickDropImageUrl;
+            set
+            {
+                _kickDropImageUrl = value;
+                OnPropertyChanged();
+            }
+        }
 
         /// <summary>
         /// Occurs when a property value changes.
@@ -264,6 +344,42 @@ namespace UI.Views
                 System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
                 {
                     TwitchWatchedChannel = channel;
+                });
+            };
+
+            DropsInventoryManager.Instance.KickCampaignChanged += (campaign, imageUrl) =>
+            {
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    KickCampaignName = campaign;
+                    KickCampaignImageUrl = imageUrl ?? string.Empty;
+                });
+            };
+
+            DropsInventoryManager.Instance.TwitchCampaignChanged += (campaign, imageUrl) =>
+            {
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    TwitchCampaignName = campaign;
+                    TwitchCampaignImageUrl = imageUrl ?? string.Empty;
+                });
+            };
+
+            DropsInventoryManager.Instance.KickDropChanged += (drop, imageUrl) =>
+            {
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    KickDropName = drop;
+                    KickDropImageUrl = imageUrl ?? string.Empty;
+                });
+            };
+
+            DropsInventoryManager.Instance.TwitchDropChanged += (drop, imageUrl) =>
+            {
+                System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                {
+                    TwitchDropName = drop;
+                    TwitchDropImageUrl = imageUrl ?? string.Empty;
                 });
             };
 
