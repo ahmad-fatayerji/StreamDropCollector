@@ -597,7 +597,8 @@ namespace Core.Managers
             _isUpdatingGameFilterOptions = true;
             try
             {
-                foreach (GameFilterOption option in options)
+                // Materialize collection to avoid "collection modified" if PropertyChanged events fire
+                foreach (GameFilterOption option in options.ToList())
                     option.IsSelected = false;
 
                 List<GameFilterOption> inactiveOptions = options
@@ -648,7 +649,8 @@ namespace Core.Managers
             IEnumerable<(Platform platform, string slug, string displayName)> options,
             List<string> whitelist)
         {
-            foreach (GameFilterOption existing in collection)
+            // Materialize collection to avoid "collection modified" during unsubscribe
+            foreach (GameFilterOption existing in collection.ToList())
                 existing.PropertyChanged -= OnGameFilterOptionPropertyChanged;
 
             collection.Clear();

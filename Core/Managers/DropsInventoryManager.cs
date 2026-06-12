@@ -227,6 +227,7 @@ namespace Core.Managers
 
                 UISettingsManager.Instance.UpdateAvailableGameFilterOptions(sourceCampaigns);
 
+                // Materialize before iterating to avoid concurrent modification
                 List<DropsCampaign> filteredCampaigns = sourceCampaigns
                     .Where(c => UISettingsManager.Instance.IsCampaignAllowedByWhitelist(c))
                     .Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now)
@@ -234,6 +235,7 @@ namespace Core.Managers
                     .ToList();
 
                 ActiveCampaigns.Clear();
+                // Safe: filtered is materialized list
                 foreach (DropsCampaign campaign in filteredCampaigns)
                     ActiveCampaigns.Add(campaign);
 
@@ -407,8 +409,15 @@ namespace Core.Managers
                     .Where(c => UISettingsManager.Instance.IsCampaignAllowedByWhitelist(c))
                     .ToList();
 
+                // Materialize before iterating to avoid deferred execution issues
+                var activeCampaignsList = filteredCampaigns
+                    .Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now)
+                    .OrderBy(x => x.Platform)
+                    .ThenBy(x => x.GameName)
+                    .ToList();
+
                 ActiveCampaigns.Clear();
-                foreach (DropsCampaign? c in filteredCampaigns.Where(c => c.StartsAt <= DateTimeOffset.Now && c.EndsAt > DateTimeOffset.Now).OrderBy(x => x.Platform).ThenBy(x => x.GameName))
+                foreach (DropsCampaign? c in activeCampaignsList)
                 {
                     ActiveCampaigns.Add(c);
                 }
@@ -986,9 +995,10 @@ namespace Core.Managers
                 if (ActiveCampaigns.Count == 0)
                     return;
 
+                // Materialize ActiveCampaigns to avoid "collection modified" during updates
                 List<DropsCampaign> updatedCampaigns = new List<DropsCampaign>(ActiveCampaigns.Count);
 
-                foreach (DropsCampaign campaign in ActiveCampaigns)
+                foreach (DropsCampaign campaign in [..ActiveCampaigns])
                 {
                     bool isCurrentCampaign = (campaign.Platform == Platform.Twitch && campaign.Id == _currentTwitchCampaign?.Id) ||
                                              (campaign.Platform == Platform.Kick && campaign.Id == _currentKickCampaign?.Id);
