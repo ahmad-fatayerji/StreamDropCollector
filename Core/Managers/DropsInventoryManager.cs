@@ -640,7 +640,7 @@ namespace Core.Managers
                         }
                     }
                 }
-                else if (UISettingsManager.Instance.NotifyOnReadyToClaim)
+                else if (UISettingsManager.Instance.NotifyOnReadyToClaim && readyToClaimRewards.Count > 0)
                 {
                     NotificationManager.ShowNotification("Drop Ready to Claim", $"You have {readyToClaimRewards.Count} drops rewards ready to claim. Please claim them manually.");
                 }
