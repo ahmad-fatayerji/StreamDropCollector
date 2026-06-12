@@ -998,7 +998,7 @@ namespace Core.Managers
                 // Materialize ActiveCampaigns to avoid "collection modified" during updates
                 List<DropsCampaign> updatedCampaigns = new List<DropsCampaign>(ActiveCampaigns.Count);
 
-                foreach (DropsCampaign campaign in [..ActiveCampaigns])
+                foreach (DropsCampaign campaign in ActiveCampaigns.ToList())
                 {
                     bool isCurrentCampaign = (campaign.Platform == Platform.Twitch && campaign.Id == _currentTwitchCampaign?.Id) ||
                                              (campaign.Platform == Platform.Kick && campaign.Id == _currentKickCampaign?.Id);
