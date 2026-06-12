@@ -294,11 +294,12 @@ namespace UI.Views
                     JsonElement payload = JsonDocument.Parse(e.ParameterObjectAsJson).RootElement;
                     string url = payload.GetProperty("response").GetProperty("url").GetString() ?? "";
 
-                    if (!url.Contains("/api/v1/drops/progress"))
+                    if (!url.EndsWith("/api/v1/drops/progress"))
                         return;
 
                     string? requestId = payload.GetProperty("requestId").GetString();
-                    if (requestId == null) return;
+                    if (requestId == null)
+                        return;
 
                     // Stale requestIds from previous navigations are hex strings (e.g. "A63D247D...")
                     // Fresh ones from the current page are numeric (e.g. "42304.356")
