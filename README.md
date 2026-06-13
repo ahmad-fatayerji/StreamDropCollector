@@ -64,9 +64,9 @@ Executable will be in `bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\`
 
 ## Privacy & Safety
 
-- No external APIs or third-party services used for authentication
+- No external APIs or third-party services are used for authentication
 - All logins happen inside secure embedded WebView2 browsers (same as Edge/Chrome)
-- Your credentials **never** leaves your machine
+- Your credentials **never** leaves your machine, outside the WebView2 engine
 - No data is sent anywhere except directly to Twitch.tv and Kick.com
 
 ## Important Notes
@@ -76,7 +76,7 @@ Executable will be in `bin\Release\net10.0-windows10.0.17763.0\publish\win-x64\`
 - Use at your own risk - automated viewing may violate platform rules in some contexts
 - Not affiliated with Twitch or Kick
 
-## ❤️ Support the Project
+## ❤️ Support the Project & the creator
 
 This tool is (and always will be) **100% free**.  
 If you're farming drops 24/7 and want to fuel more rage-fueled coding sessions, then hit that button and become a legend.
