@@ -1,10 +1,12 @@
-﻿using System.Windows.Threading;
+﻿using Core;
+using Core.Logging;
+using Core.Managers;
 using Microsoft.Win32;
+using System.Diagnostics;
+using System.IO;
 using System.IO.Pipes;
 using System.Windows;
-using Core.Managers;
-using Core.Logging;
-using System.IO;
+using System.Windows.Threading;
 
 namespace UI
 {
@@ -36,8 +38,11 @@ namespace UI
         {
             AppLogger.Initialize();
 
+            FileVersionInfo localVersionInfo = FileVersionInfo.GetVersionInfo(Utility.GetExePath());
+            string versionInfo = localVersionInfo.FileVersion ?? "N/A";
+
             // Log app startup + Version
-            AppLogger.Info("App", $"Starting StreamDropCollector version {GetType().Assembly.GetName().Version}");
+            AppLogger.Info("App", $"Starting StreamDropCollector version {versionInfo}");
 
             bool ignoreMutexRule = e.Args.Any(a => a.Equals("--updating", StringComparison.OrdinalIgnoreCase) || a.Equals("--updated", StringComparison.OrdinalIgnoreCase));
 
