@@ -23,7 +23,6 @@ jobs:
           -c Release
           -r win-x64
           -p:SelfContained=true
-          -p:PublishSingleFile=true
           -o publish/
 
       - name: Zip output
