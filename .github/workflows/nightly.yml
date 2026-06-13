@@ -25,7 +25,6 @@ jobs:
           -c Release
           -r win-x64
           -p:SelfContained=true
-          -p:PublishSingleFile=true
           -o publish/self-contained/
 
       - name: Publish (Framework-Dependent)
@@ -34,7 +33,6 @@ jobs:
           -c Release
           -r win-x64
           -p:SelfContained=false
-          -p:PublishSingleFile=true
           -o publish/framework-dependent/
 
       - name: Zip (Self-Contained)
