@@ -49,5 +49,8 @@ namespace Core.Models
         Platform Platform,
         IReadOnlyList<string> ConnectUrls,
         bool IsGeneralDrop,
-        bool IsCurrentCampaign = false);
+        bool IsCurrentCampaign = false)
+    {
+        public bool AllRewardsClaimed => Rewards.All(r => r.IsClaimed);
+    }
 }

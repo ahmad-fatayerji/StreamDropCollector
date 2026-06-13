@@ -115,6 +115,36 @@
                                                        Foreground="{DynamicResource MainBackgroundBrush}"/>
                                         </Border>
                                     </StackPanel>
+
+                                    <!-- Watch button - only shown when NOT the current campaign -->
+                                    <Button Content="▶  Watch this campaign instead"
+                                        Margin="0,12,0,0"
+                                        Padding="12,6"
+                                        HorizontalAlignment="Left"
+                                        Command="{Binding DataContext.SwitchCampaignCommand, 
+                                                  RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                        CommandParameter="{Binding}">
+                                        <Button.Style>
+                                            <Style TargetType="Button">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Setter Property="Background" Value="{DynamicResource SecondaryAccentBrush}"/>
+                                                <Setter Property="Foreground" Value="{DynamicResource MainBackgroundBrush}"/>
+                                                <Setter Property="BorderThickness" Value="0"/>
+                                                <Setter Property="FontWeight" Value="SemiBold"/>
+                                                <Setter Property="FontSize" Value="12"/>
+                                                <Setter Property="Cursor" Value="Hand"/>
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding IsCurrentCampaign}" Value="False"/>
+                                                            <Condition Binding="{Binding AllRewardsClaimed}" Value="False"/>
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Button.Style>
+                                    </Button>
                                 </StackPanel>
 
                                 <!-- Rewards List -->

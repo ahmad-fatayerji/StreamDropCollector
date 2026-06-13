@@ -1,8 +1,13 @@
 {
-  "version": "1.0.22",
-  "type": "Patch",
-  "changelog": "Hotfix.",
+  "version": "1.0.23",
+  "type": "Feature",
+  "changelog": "Added the ability to manually switch campaigns.",
   "historic_versions": [
+    {
+      "version": "1.0.22",
+      "type": "Patch",
+      "changelog": "Hotfix."
+    },
     {
       "version": "1.0.21",
       "type": "Patch",

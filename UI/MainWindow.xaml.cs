@@ -138,7 +138,8 @@ namespace UI
                             "Settings.json",
                             "sha_cache.tsgs",
                             "GqlHashCache.json",
-                            "LastWatchedStreamers.json"
+                            "LastWatchedStreamers.json",
+                            "PinnedCampaignCache.json"
                         ];
 
                         // Delete all files, except for the ones in filesToKeep
