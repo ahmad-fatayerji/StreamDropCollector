@@ -2070,7 +2070,10 @@ namespace Core.Managers
         /// otherwise, false.</returns>
         public static bool HasProgressToMake(this DropsCampaign campaign)
         {
-            return campaign.Rewards.Any(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes);
+            if (UISettingsManager.Instance.AutoClaimRewards)
+                return campaign.Rewards.Any(r => !r.IsClaimed);
+            else
+                return campaign.Rewards.Any(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes);
         }
 
         /// <summary>

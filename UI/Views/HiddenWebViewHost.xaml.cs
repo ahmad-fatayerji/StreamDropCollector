@@ -839,9 +839,17 @@ namespace UI.Views
                 }
                 else
                 {
-                    string? error = doc.RootElement.TryGetProperty("error", out JsonElement errElem)
-                        ? errElem.GetString()
-                        : "Unknown error";
+                    string? error =
+                        doc.RootElement.TryGetProperty("error", out JsonElement errElem) &&
+                        !string.IsNullOrWhiteSpace(errElem.GetString())
+                            ? errElem.GetString()
+                            : (
+                                doc.RootElement.TryGetProperty("data", out JsonElement data1) &&
+                                data1.TryGetProperty("data", out JsonElement data2) &&
+                                data2.TryGetProperty("details", out JsonElement details)
+                                    ? details.GetString()
+                                    : "Unknown error"
+                              );
                     AppLogger.Warn("KickClaim", $"Kick claim failed: {error}");
                 }
 
