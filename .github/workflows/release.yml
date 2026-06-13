@@ -40,12 +40,26 @@ jobs:
       - name: Zip (Framework-Dependent)
         run: Compress-Archive -Path publish/framework-dependent/* -DestinationPath StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip
 
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV=$(git tag --sort=-version:refname | grep -v ${{ github.ref_name }} | head -n 1)
+          echo "tag=$PREV" >> $GITHUB_OUTPUT
+
       - name: Create release
-        run: >
-          gh release create ${{ github.ref_name }}
-          StreamDropCollector-${{ github.ref_name }}-self-contained.zip
-          StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip
-          --title "StreamDropCollector ${{ github.ref_name }}"
-          --verify-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            StreamDropCollector-${{ github.ref_name }}-self-contained.zip \
+            StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip \
+            --title "StreamDropCollector ${{ github.ref_name }}" \
+            --verify-tag \
+            --notes "$(cat <<'EOF'
+          [Download it here](https://download-directory.github.io/?url=https://github.com/tsgsOFFICIAL/StreamDropCollector/tree/master/UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64)
+          [Installation guide](https://github.com/tsgsOFFICIAL/StreamDropCollector?tab=readme-ov-file#quick-start)
+          Drop your comments on my [Discord](https://discord.gg/Cddu5aJ), or create an issue on GitHub.
+
+          **Full Changelog**: https://github.com/tsgsOFFICIAL/StreamDropCollector/compare/${{ steps.prev_tag.outputs.tag }}...${{ github.ref_name }}
+          EOF
+          )"
