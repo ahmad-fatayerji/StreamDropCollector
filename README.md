@@ -5,6 +5,7 @@ Watch streams in the background, earn campaign rewards, and claim them automatic
 
 [![Issues](https://img.shields.io/github/issues/tsgsOFFICIAL/StreamDropCollector)](https://github.com/tsgsOFFICIAL/StreamDropCollector/issues)
 [![Last Commit](https://img.shields.io/github/last-commit/tsgsOFFICIAL/StreamDropCollector)](https://github.com/tsgsOFFICIAL/StreamDropCollector/commits/master)
+[![Nightly Build](https://github.com/tsgsOFFICIAL/StreamDropCollector/actions/workflows/nightly.yml/badge.svg)](https://github.com/tsgsOFFICIAL/StreamDropCollector/actions/workflows/nightly.yml)
 [![GitHub license](https://img.shields.io/github/license/tsgsOFFICIAL/StreamDropCollector)](https://github.com/tsgsOFFICIAL/StreamDropCollector/blob/master/LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-blueviolet)](https://dotnet.microsoft.com/download)
 [![WPF](https://img.shields.io/badge/WPF-Modern_UI-teal)](https://learn.microsoft.com/en-us/dotnet/desktop/wpf/overview)
