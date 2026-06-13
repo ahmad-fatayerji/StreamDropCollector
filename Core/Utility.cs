@@ -1,9 +1,10 @@
 ﻿using System.Runtime.InteropServices;
+using System.Windows.Input;
 using System.Diagnostics;
 using Microsoft.Win32;
 using System.Windows;
-using System.IO;
 using Core.Logging;
+using System.IO;
 
 namespace Core
 {
@@ -94,6 +95,13 @@ namespace Core
             string executingName = Path.GetFileNameWithoutExtension(Environment.GetCommandLineArgs()[0]);
 
             return exeLocation ?? $"{Path.Combine(executingDir, executingName)}.exe";
+        }
+
+        public class RelayCommand<T>(Func<T?, Task> executeAsync) : ICommand
+        {
+            public event EventHandler? CanExecuteChanged;
+            public bool CanExecute(object? parameter) => true;
+            public async void Execute(object? parameter) => await executeAsync(parameter is T t ? t : default);
         }
     }
 }

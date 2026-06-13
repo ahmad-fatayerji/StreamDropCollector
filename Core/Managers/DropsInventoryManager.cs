@@ -1,12 +1,14 @@
-﻿using System.Collections.ObjectModel;
-using System.Text.Json;
+﻿using Core.Enums;
 using Core.Interfaces;
-using System.Windows;
-using System.Timers;
 using Core.Logging;
 using Core.Models;
-using Core.Enums;
+using System.Collections.ObjectModel;
 using System.IO;
+using System.Text;
+using System.Text.Json;
+using System.Timers;
+using System.Windows;
+using System.Windows.Input;
 
 namespace Core.Managers
 {
@@ -39,6 +41,13 @@ namespace Core.Managers
         private string? _lastKickDropId;   // id of the last reward reported via KickDropChanged
         private DropsCampaign? _currentKickCampaign;
         private IGqlService? _twitchGqlService;
+
+        private string? _pinnedCampaignId; // Used to track if the user has manually pinned a campaign to watch regardless of order
+
+        private static readonly string _pinnedCampaignCacheFilePath = Path.Combine(
+            Environment.ExpandEnvironmentVariables("%APPDATA%"),
+            "Stream Drop Collector",
+            "PinnedCampaignCache.json");
 
         private int _twitchWatchedSeconds;
         private int _kickWatchedSeconds;
@@ -84,6 +93,21 @@ namespace Core.Managers
         }
 
         /// <summary>
+        /// switches the currently watched campaign to the specified campaign, if it is not null and the miner is not paused. This command is intended to be bound to UI elements that allow the user to manually select a campaign to watch. When executed, it updates the pinned campaign ID and restarts the stream watching process to reflect the new selection. If the command is invoked while the miner is paused or with a null campaign, it will have no effect.
+        /// </summary>
+        public ICommand SwitchCampaignCommand => new Utility.RelayCommand<DropsCampaign>(async campaign =>
+        {
+            if (campaign == null || _isPaused)
+                return;
+
+            AppLogger.Info("Miner", $"User manually switched to campaign '{campaign.Name}' ({campaign.Id}).");
+            _pinnedCampaignId = campaign.Id;
+            SavePinnedCampaignToDisk();
+            await StartWatchingStreams(true);
+        });
+
+
+        /// <summary>
         /// Initializes a new instance of the DropsInventoryManager class.
         /// </summary>
         /// <remarks>This constructor is private to enforce the singleton pattern. It sets up event
@@ -92,6 +116,7 @@ namespace Core.Managers
         private DropsInventoryManager()
         {
             LoadLastWatchedStreamers();
+            LoadPinnedCampaignFromDisk();
             UISettingsManager.Instance.MiningPriorityModeChanged += OnMiningPriorityModeChanged;
             UISettingsManager.Instance.GameWhitelistChanged += OnGameWhitelistChanged;
 
@@ -1133,6 +1158,23 @@ namespace Core.Managers
         /// percentage, the campaign closest to earning its next unclaimed reward is selected.</returns>
         private Task<DropsCampaign?> SelectBestCampaign(List<DropsCampaign> campaigns)
         {
+            // Honor manual override from SwitchCampaignCommand
+            if (_pinnedCampaignId != null)
+            {
+                DropsCampaign? pinned = campaigns.FirstOrDefault(c => c.Id == _pinnedCampaignId);
+
+                if (pinned != null)
+                {
+                    AppLogger.Info("Selection", $"Pinned campaign '{pinned.Name}' selected via manual override.");
+                    return Task.FromResult<DropsCampaign?>(pinned);
+                }
+
+                // Campaign no longer in candidates - channels offline or all rewards claimed
+                AppLogger.Info("Selection", $"Pinned campaign '{_pinnedCampaignId}' is no longer pursuable, releasing pin.");
+                _pinnedCampaignId = null;
+                SavePinnedCampaignToDisk();
+            }
+
             MiningPriorityMode mode = UISettingsManager.Instance.MiningPriorityMode;
             AppLogger.Debug("Selection", $"Selecting best campaign with mode={mode}, candidates={campaigns.Count}");
             List<DropsCampaign> prioritizedCampaigns = mode switch
@@ -2015,6 +2057,53 @@ namespace Core.Managers
             {
                 AppLogger.Warn("StreamSelection", $"Failed saving remembered streamers. {ex.Message}");
             }
+        }
+
+        private void LoadPinnedCampaignFromDisk()
+        {
+            try
+            {
+                if (!File.Exists(_pinnedCampaignCacheFilePath))
+                    return;
+
+                string json = File.ReadAllText(_pinnedCampaignCacheFilePath, Encoding.UTF8);
+                PinnedCampaignCacheEntry? entry = JsonSerializer.Deserialize<PinnedCampaignCacheEntry>(json);
+
+                if (entry != null && !string.IsNullOrWhiteSpace(entry.CampaignId))
+                {
+                    _pinnedCampaignId = entry.CampaignId;
+                    AppLogger.Info("Inventory", $"[PinnedCampaign] Restored pinned campaign '{_pinnedCampaignId}' from disk.");
+                }
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Inventory", $"[PinnedCampaign] Failed to load cache. {ex.Message}");
+            }
+        }
+
+        private void SavePinnedCampaignToDisk()
+        {
+            try
+            {
+                string? directory = Path.GetDirectoryName(_pinnedCampaignCacheFilePath);
+                if (!string.IsNullOrWhiteSpace(directory))
+                    Directory.CreateDirectory(directory);
+
+                string json = JsonSerializer.Serialize(
+                    new PinnedCampaignCacheEntry { CampaignId = _pinnedCampaignId },
+                    new JsonSerializerOptions { WriteIndented = true });
+
+                File.WriteAllText(_pinnedCampaignCacheFilePath, json, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("Inventory", $"[PinnedCampaign] Failed to save cache. {ex.Message}");
+            }
+        }
+
+        private sealed class PinnedCampaignCacheEntry
+        {
+            public string? CampaignId { get; set; }
         }
 
         /// <summary>
