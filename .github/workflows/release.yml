@@ -51,9 +51,9 @@ jobs:
           Drop your comments on my [Discord](https://discord.gg/Cddu5aJ), or create an issue on GitHub.
           "@
 
-          gh release create ${{ github.ref_name }} `
-            StreamDropCollector-${{ github.ref_name }}-self-contained.zip `
-            StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip `
-            --title "StreamDropCollector ${{ github.ref_name }}" `
-            --verify-tag `
+          gh release create ${{ github.ref_name }} 
+            StreamDropCollector-${{ github.ref_name }}-self-contained.zip 
+            StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip 
+            --title "StreamDropCollector ${{ github.ref_name }}" 
+            --verify-tag 
             --notes $notes
