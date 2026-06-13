@@ -42,9 +42,10 @@ jobs:
 
       - name: Get previous tag
         id: prev_tag
+        shell: pwsh
         run: |
-          PREV=$(git tag --sort=-version:refname | grep -v ${{ github.ref_name }} | head -n 1)
-          echo "tag=$PREV" >> $GITHUB_OUTPUT
+          $prev = git tag --sort=-version:refname | Where-Object { $_ -ne "${{ github.ref_name }}" } | Select-Object -First 1
+          echo "tag=$prev" >> $env:GITHUB_OUTPUT
 
       - name: Create release
         env:
