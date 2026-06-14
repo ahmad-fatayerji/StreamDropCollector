@@ -54,6 +54,7 @@ namespace UI
         private bool _isInTrayMode = false;
         private double _savedLeft;
         private double _savedTop;
+        private WindowState _savedWindowState = WindowState.Normal;
 
         private const int WS_EX_TOOLWINDOW = 0x00000080;
         private const int GWL_EXSTYLE = -20;
@@ -314,15 +315,26 @@ namespace UI
                 return;
 
             _isInTrayMode = true;
+            _savedWindowState = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
 
             // Save current position (only if valid)
-            if (!double.IsNaN(Left) && !double.IsNaN(Top))
+            Rect restoreBounds = RestoreBounds;
+            if (WindowState == WindowState.Maximized && !restoreBounds.IsEmpty)
+            {
+                _savedLeft = restoreBounds.Left;
+                _savedTop = restoreBounds.Top;
+            }
+            else if (!double.IsNaN(Left) && !double.IsNaN(Top))
             {
                 _savedLeft = Left;
                 _savedTop = Top;
             }
 
             ShowInTaskbar = false;
+
+            // A maximized window ignores Left/Top changes, so restore it before moving it off-screen.
+            if (WindowState != WindowState.Normal)
+                WindowState = WindowState.Normal;
 
             // Move off-screen, but keep Normal and visible to OS
             Left = -32000;
@@ -354,8 +366,11 @@ namespace UI
             ShowInTaskbar = true;
 
             // Restore position
+            WindowState = WindowState.Normal;
             Left = _savedLeft;
             Top = _savedTop;
+            if (_savedWindowState == WindowState.Maximized)
+                WindowState = WindowState.Maximized;
 
             // Show in ALT+TAB again
             IntPtr hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
@@ -380,24 +395,14 @@ namespace UI
         {
             // Exit tray mode if active
             if (_isInTrayMode)
-            {
-                _isInTrayMode = false;
-
-                ShowInTaskbar = true;
-
-                // Restore position
-                Left = _savedLeft;
-                Top = _savedTop;
-
-                MinimizeAndRestore.Header = "Minimize";
-                MyNotifyIcon.ToolTipText = "Stream Drop Collector by tsgsOFFICIAL";
-            }
+                ExitTrayMode();
 
             // Always ensure visible and focused
             if (!IsVisible)
                 Show();
 
-            WindowState = WindowState.Normal; // In case it was maximized/minimized
+            if (WindowState == WindowState.Minimized)
+                WindowState = WindowState.Normal;
 
             Activate();
             Topmost = true;
