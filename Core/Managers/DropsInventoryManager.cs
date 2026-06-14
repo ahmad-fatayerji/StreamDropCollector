@@ -106,6 +106,15 @@ namespace Core.Managers
             await StartWatchingStreams(true);
         });
 
+        public ICommand OpenStreamerCommand => new Utility.RelayCommand<DropStreamer>(streamer =>
+        {
+            if (streamer == null || string.IsNullOrWhiteSpace(streamer.Url))
+                return Task.CompletedTask;
+
+            Utility.LaunchWeb(streamer.Url);
+            return Task.CompletedTask;
+        });
+
 
         /// <summary>
         /// Initializes a new instance of the DropsInventoryManager class.

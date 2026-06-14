@@ -545,17 +545,105 @@ namespace UI.Views
             {
                 foreach (DropsCampaign campaign in campaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))
                 {
-                    if (_activeCampaigns.Any(existing => existing.Platform == campaign.Platform && existing.Id == campaign.Id))
+                    int existingIndex = _activeCampaigns
+                        .Select((existing, index) => new { existing, index })
+                        .FirstOrDefault(x => x.existing.Platform == campaign.Platform && x.existing.Id == campaign.Id)
+                        ?.index ?? -1;
+
+                    if (existingIndex >= 0)
+                    {
+                        _activeCampaigns[existingIndex] = campaign;
                         continue;
+                    }
 
                     _activeCampaigns.Add(campaign);
                 }
 
                 MinerStatusDetails = $"{_activeCampaigns.Count} active campaigns loaded so far";
+                UpdatePlatformProgressPreview(campaigns);
                 currentCampaigns = _activeCampaigns.ToList();
             });
 
             DropsInventoryManager.Instance.UpdateCampaigns(currentCampaigns, _twitchGqlService, startWatching: false);
+        }
+
+        private void UpdatePlatformProgressPreview(IReadOnlyList<DropsCampaign> campaigns)
+        {
+            DateTimeOffset now = DateTimeOffset.Now;
+            IEnumerable<IGrouping<Platform, DropsCampaign>> platformGroups = campaigns
+                .Where(c => c.StartsAt <= now && c.EndsAt > now)
+                .Where(c => UISettingsManager.Instance.IsCampaignAllowedByWhitelist(c))
+                .GroupBy(c => c.Platform);
+
+            foreach (IGrouping<Platform, DropsCampaign> platformGroup in platformGroups)
+            {
+                DropsCampaign? campaign = platformGroup
+                    .Where(c => c.HasProgressToMake())
+                    .OrderByDescending(c => c.CompletionPercentage())
+                    .ThenBy(c => c.EndsAt)
+                    .FirstOrDefault()
+                    ?? platformGroup
+                        .OrderByDescending(c => c.CompletionPercentage())
+                        .ThenBy(c => c.EndsAt)
+                        .FirstOrDefault();
+
+                if (campaign == null)
+                    continue;
+
+                DropsReward? reward = campaign.Rewards
+                    .Where(r => !r.IsClaimed)
+                    .OrderBy(r => r.RequiredMinutes)
+                    .FirstOrDefault()
+                    ?? campaign.Rewards
+                        .OrderByDescending(r => r.RequiredMinutes)
+                        .FirstOrDefault();
+
+                byte campaignProgress = CalculateCampaignProgress(campaign);
+                byte dropProgress = CalculateRewardProgress(reward);
+
+                if (platformGroup.Key == Platform.Kick)
+                {
+                    KickCampaignName = campaign.Name;
+                    KickCampaignImageUrl = campaign.GameImageUrl ?? string.Empty;
+                    KickCampaignProgress = campaignProgress;
+                    KickDropName = reward?.Name ?? string.Empty;
+                    KickDropImageUrl = reward?.ImageUrl ?? string.Empty;
+                    KickDropProgress = dropProgress;
+                }
+                else if (platformGroup.Key == Platform.Twitch)
+                {
+                    TwitchCampaignName = campaign.Name;
+                    TwitchCampaignImageUrl = campaign.GameImageUrl ?? string.Empty;
+                    TwitchCampaignProgress = campaignProgress;
+                    TwitchDropName = reward?.Name ?? string.Empty;
+                    TwitchDropImageUrl = reward?.ImageUrl ?? string.Empty;
+                    TwitchDropProgress = dropProgress;
+                }
+            }
+        }
+
+        private static byte CalculateCampaignProgress(DropsCampaign campaign)
+        {
+            int totalRequiredMinutes = campaign.Rewards.Sum(r => r.RequiredMinutes);
+            if (totalRequiredMinutes <= 0)
+                return 100;
+
+            int completedMinutes = campaign.Rewards.Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes));
+            return (byte)Math.Clamp((int)Math.Floor((double)completedMinutes / totalRequiredMinutes * 100), 0, 100);
+        }
+
+        private static byte CalculateRewardProgress(DropsReward? reward)
+        {
+            if (reward == null)
+                return 0;
+
+            if (reward.IsClaimed)
+                return 100;
+
+            if (reward.RequiredMinutes <= 0)
+                return 100;
+
+            return (byte)Math.Clamp((int)Math.Floor((double)reward.ProgressMinutes / reward.RequiredMinutes * 100), 0, 100);
         }
         /// <summary>
         /// Asynchronously validates the current Twitch credentials using the associated web view and service.

@@ -152,57 +152,73 @@
 
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Border CornerRadius="6"
-                                                                Padding="8,4"
+                                                        <Button Command="{Binding DataContext.OpenStreamerCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                                CommandParameter="{Binding}"
+                                                                Cursor="Hand"
+                                                                Padding="0"
                                                                 Margin="0,0,6,6"
-                                                                BorderBrush="{DynamicResource BorderBrush}"
-                                                                BorderThickness="1">
-                                                            <Border.Style>
-                                                                <Style TargetType="Border">
-                                                                    <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}"/>
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding IsLive}" Value="True">
-                                                                            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding IsLive}" Value="False">
-                                                                            <Setter Property="BorderBrush" Value="#FF6666"/>
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
+                                                                BorderThickness="0"
+                                                                Background="Transparent">
+                                                            <Button.Style>
+                                                                <Style TargetType="Button">
+                                                                    <Setter Property="Template">
+                                                                        <Setter.Value>
+                                                                            <ControlTemplate TargetType="Button">
+                                                                                <ContentPresenter/>
+                                                                            </ControlTemplate>
+                                                                        </Setter.Value>
+                                                                    </Setter>
                                                                 </Style>
-                                                            </Border.Style>
+                                                            </Button.Style>
 
-                                                            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                                <Ellipse Width="8" Height="8" Margin="0,0,6,0">
-                                                                    <Ellipse.Style>
-                                                                        <Style TargetType="Ellipse">
-                                                                            <Setter Property="Fill" Value="{DynamicResource TextMutedBrush}"/>
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding IsLive}" Value="True">
-                                                                                    <Setter Property="Fill" Value="{DynamicResource AccentBrush}"/>
-                                                                                </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding IsLive}" Value="False">
-                                                                                    <Setter Property="Fill" Value="#FF6666"/>
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </Ellipse.Style>
-                                                                </Ellipse>
+                                                            <Border CornerRadius="6"
+                                                                    Padding="8,4"
+                                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                                    BorderThickness="1">
+                                                                <Border.Style>
+                                                                    <Style TargetType="Border">
+                                                                        <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}"/>
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding IsLive}" Value="True">
+                                                                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsLive}" Value="False">
+                                                                                <Setter Property="BorderBrush" Value="#FF6666"/>
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Border.Style>
 
-                                                                <TextBlock Text="{Binding DisplayName}"
-                                                                           Foreground="{DynamicResource TextPrimaryBrush}"
-                                                                           FontSize="12"
-                                                                           MaxWidth="130"
-                                                                           TextTrimming="CharacterEllipsis"
-                                                                           VerticalAlignment="Center"/>
+                                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0">
+                                                                        <Ellipse.Style>
+                                                                            <Style TargetType="Ellipse">
+                                                                                <Setter Property="Fill" Value="#FF6666"/>
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding IsLive}" Value="True">
+                                                                                        <Setter Property="Fill" Value="{DynamicResource AccentBrush}"/>
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </Ellipse.Style>
+                                                                    </Ellipse>
 
-                                                                <TextBlock Text="{Binding AvailabilityText}"
-                                                                           Foreground="{DynamicResource TextMutedBrush}"
-                                                                           FontSize="10"
-                                                                           FontWeight="SemiBold"
-                                                                           Margin="8,0,0,0"
-                                                                           VerticalAlignment="Center"/>
-                                                            </StackPanel>
-                                                        </Border>
+                                                                    <TextBlock Text="{Binding DisplayName}"
+                                                                               Foreground="{DynamicResource TextPrimaryBrush}"
+                                                                               FontSize="12"
+                                                                               MaxWidth="130"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               VerticalAlignment="Center"/>
+
+                                                                    <TextBlock Text="{Binding AvailabilityText}"
+                                                                               Foreground="{DynamicResource TextMutedBrush}"
+                                                                               FontSize="10"
+                                                                               FontWeight="SemiBold"
+                                                                               Margin="8,0,0,0"
+                                                                               VerticalAlignment="Center"/>
+                                                                </StackPanel>
+                                                            </Border>
+                                                        </Button>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>

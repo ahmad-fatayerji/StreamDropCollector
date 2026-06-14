@@ -18,7 +18,7 @@ namespace Core
         {
             try
             {
-                Process.Start(url);
+                Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
             }
             catch (Exception ex)
             {

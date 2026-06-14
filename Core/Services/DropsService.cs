@@ -41,12 +41,12 @@ namespace Core.Services
             Task<IReadOnlyList<DropsCampaign>>? twitchFetchTask = null;
 
             if (kickStatus == ConnectionStatus.Connected)
-                kickFetchTask = FetchPlatformCampaignsAsync("Kick", () => _kickProvider.GetActiveCampaignsAsync(kickHost, ct), ct, platformCampaignsFetched);
+                kickFetchTask = FetchPlatformCampaignsAsync("Kick", () => _kickProvider.GetActiveCampaignsAsync(kickHost, ct, platformCampaignsFetched), ct, platformCampaignsFetched);
 
             if (twitchStatus == ConnectionStatus.Connected)
             {
                 TwitchDropsProvider twitchProvider = new(gqlService!);
-                twitchFetchTask = FetchPlatformCampaignsAsync("Twitch", () => twitchProvider.GetActiveCampaignsAsync(twitchHost, ct), ct, platformCampaignsFetched);
+                twitchFetchTask = FetchPlatformCampaignsAsync("Twitch", () => twitchProvider.GetActiveCampaignsAsync(twitchHost, ct, platformCampaignsFetched), ct, platformCampaignsFetched);
             }
 
             List<Task<IReadOnlyList<DropsCampaign>>> fetchTasks = new();

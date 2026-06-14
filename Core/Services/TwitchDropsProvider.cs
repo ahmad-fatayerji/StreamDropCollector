@@ -21,6 +21,14 @@ namespace Core.Services
 
         public override async Task<IReadOnlyList<DropsCampaign>> GetActiveCampaignsAsync(IWebViewHost host, CancellationToken ct = default)
         {
+            return await GetActiveCampaignsAsync(host, ct, campaignsFetchedBeforeStreamerStatus: null);
+        }
+
+        public async Task<IReadOnlyList<DropsCampaign>> GetActiveCampaignsAsync(
+            IWebViewHost host,
+            CancellationToken ct = default,
+            Action<IReadOnlyList<DropsCampaign>>? campaignsFetchedBeforeStreamerStatus = null)
+        {
             try
             {
                 AppLogger.Info("TwitchDrops", "Fetching active campaigns started.");
@@ -164,6 +172,8 @@ namespace Core.Services
 
                     updatedResult.Add(updatedCampaign);
                 }
+
+                campaignsFetchedBeforeStreamerStatus?.Invoke(updatedResult.AsReadOnly());
 
                 IReadOnlyList<DropsCampaign> campaignsWithStreamerStatus = await AddTwitchStreamerAvailabilityAsync(updatedResult, ct);
 

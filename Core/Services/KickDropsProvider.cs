@@ -31,6 +31,14 @@ namespace Core.Services
         /// and the user's progress and claim status. Returns an empty list if no active campaigns are found.</returns>
         public override async Task<IReadOnlyList<DropsCampaign>> GetActiveCampaignsAsync(IWebViewHost host, CancellationToken ct = default)
         {
+            return await GetActiveCampaignsAsync(host, ct, campaignsFetchedBeforeStreamerStatus: null);
+        }
+
+        public async Task<IReadOnlyList<DropsCampaign>> GetActiveCampaignsAsync(
+            IWebViewHost host,
+            CancellationToken ct = default,
+            Action<IReadOnlyList<DropsCampaign>>? campaignsFetchedBeforeStreamerStatus = null)
+        {
             try
             {
                 AppLogger.Info("KickDrops", "Fetching active campaigns started.");
@@ -223,6 +231,8 @@ namespace Core.Services
                     }
                 }
 
+                campaignsFetchedBeforeStreamerStatus?.Invoke(campaigns.AsReadOnly());
+
                 IReadOnlyList<DropsCampaign> campaignsWithStreamerStatus = await AddKickStreamerAvailabilityAsync(host, campaigns, ct);
 
                 AppLogger.Debug("KickDrops", $"LOADED {campaignsWithStreamerStatus.Count} campaigns with progress");
@@ -238,83 +248,118 @@ namespace Core.Services
 
         private static async Task<IReadOnlyList<DropsCampaign>> AddKickStreamerAvailabilityAsync(IWebViewHost host, IReadOnlyList<DropsCampaign> campaigns, CancellationToken ct)
         {
-            List<string> unknownLogins = campaigns
+            List<string> streamerLogins = campaigns
                 .SelectMany(c => c.Streamers)
-                .Where(s => s.IsLive == null)
                 .Select(s => s.Login)
                 .Where(login => !string.IsNullOrWhiteSpace(login))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Take(50)
                 .ToList();
 
-            if (unknownLogins.Count == 0)
+            if (streamerLogins.Count == 0)
+            {
+                AppLogger.Info("KickDrops", "Kick streamer availability lookup skipped. listedStreamers=0");
                 return campaigns;
+            }
 
             try
             {
-                string loginJson = JsonSerializer.Serialize(unknownLogins);
+                AppLogger.Info("KickDrops", $"Kick streamer availability lookup started. listedStreamers={campaigns.SelectMany(c => c.Streamers).Count()}, requested={streamerLogins.Count}");
+
+                string loginJson = JsonSerializer.Serialize(streamerLogins);
                 await host.NavigateAsync($"https://kick.com/?availabilityCheck={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
 
                 string script = $$"""
-                    (async () => {
+                    (() => {
                         const logins = {{loginJson}};
-                        const results = {};
+                        const statuses = {};
+                        const errors = {};
 
-                        await Promise.all(logins.map(async login => {
-                            const controller = new AbortController();
-                            const timeout = setTimeout(() => controller.abort(), 3500);
-
-                            try {
-                                const response = await fetch(`/api/v2/channels/${encodeURIComponent(login)}`, {
-                                    credentials: 'include',
-                                    signal: controller.signal
-                                });
-
-                                if (!response.ok) {
-                                    results[login] = false;
-                                    return;
-                                }
-
-                                const data = await response.json();
-                                if (typeof data?.is_live === 'boolean') {
-                                    results[login] = data.is_live;
-                                } else if (typeof data?.isLive === 'boolean') {
-                                    results[login] = data.isLive;
-                                } else if ('livestream' in data) {
-                                    results[login] = data.livestream !== null;
-                                } else if ('stream' in data) {
-                                    results[login] = data.stream !== null;
-                                } else {
-                                    results[login] = false;
-                                }
-                            } catch {
-                                results[login] = false;
-                            } finally {
-                                clearTimeout(timeout);
+                        function readLiveStatus(value, depth = 0) {
+                            if (!value || typeof value !== 'object' || depth > 4) {
+                                return undefined;
                             }
-                        }));
 
-                        return JSON.stringify(results);
+                            for (const key of ['is_live', 'isLive', 'is_online', 'isOnline', 'online']) {
+                                if (typeof value[key] === 'boolean') {
+                                    return value[key];
+                                }
+                            }
+
+                            for (const key of ['livestream', 'live_stream', 'current_livestream', 'stream']) {
+                                if (Object.prototype.hasOwnProperty.call(value, key)) {
+                                    return value[key] !== null && value[key] !== false;
+                                }
+                            }
+
+                            for (const key of ['data', 'channel', 'user']) {
+                                const nested = readLiveStatus(value[key], depth + 1);
+                                if (typeof nested === 'boolean') {
+                                    return nested;
+                                }
+                            }
+
+                            return undefined;
+                        }
+
+                        for (const login of logins) {
+                            try {
+                                const xhr = new XMLHttpRequest();
+                                xhr.open('GET', `/api/v2/channels/${encodeURIComponent(login)}`, false);
+                                xhr.setRequestHeader('Accept', 'application/json');
+                                xhr.send();
+
+                                if (xhr.status < 200 || xhr.status >= 300) {
+                                    statuses[login] = null;
+                                    errors[login] = `HTTP ${xhr.status}`;
+                                    continue;
+                                }
+
+                                const data = JSON.parse(xhr.responseText || '{}');
+                                const status = readLiveStatus(data);
+                                if (typeof status === 'boolean') {
+                                    statuses[login] = status;
+                                } else {
+                                    statuses[login] = null;
+                                    errors[login] = `No live field. keys=${Object.keys(data || {}).slice(0, 12).join(',')}`;
+                                }
+                            } catch (err) {
+                                statuses[login] = null;
+                                errors[login] = err?.name || err?.message || 'fetch failed';
+                            }
+                        }
+
+                        return JSON.stringify({ statuses, errors });
                     })();
                     """;
 
                 string rawResult = await host.ExecuteScriptAsync(script);
                 string? json = DecodeExecuteScriptStringResult(rawResult);
-                Dictionary<string, bool>? statuses = string.IsNullOrWhiteSpace(json)
+                KickAvailabilityLookupResult? lookupResult = string.IsNullOrWhiteSpace(json)
                     ? null
-                    : JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
+                    : JsonSerializer.Deserialize<KickAvailabilityLookupResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                Dictionary<string, bool?>? statuses = lookupResult?.Statuses;
 
                 if (statuses == null || statuses.Count == 0)
+                {
+                    AppLogger.Warn("KickDrops", $"Kick streamer availability lookup returned no statuses. rawResult={TrimForLog(rawResult)}, decoded={TrimForLog(json)}");
                     return campaigns;
+                }
 
-                AppLogger.Info("KickDrops", $"Kick streamer availability lookup completed. requested={unknownLogins.Count}, resolved={statuses.Count}, live={statuses.Count(x => x.Value)}, offline={statuses.Count(x => !x.Value)}");
+                int liveCount = statuses.Count(x => x.Value == true);
+                int offlineCount = statuses.Count(x => x.Value == false);
+                int unknownCount = statuses.Count(x => x.Value == null);
+                string errorSummary = lookupResult?.Errors is { Count: > 0 }
+                    ? string.Join("; ", lookupResult.Errors.Take(5).Select(x => $"{x.Key}={x.Value}"))
+                    : "none";
+                AppLogger.Info("KickDrops", $"Kick streamer availability lookup completed. requested={streamerLogins.Count}, resolved={statuses.Count}, live={liveCount}, offline={offlineCount}, unknown={unknownCount}, errors={errorSummary}");
 
                 List<DropsCampaign> updatedCampaigns = new(campaigns.Count);
                 foreach (DropsCampaign campaign in campaigns)
                 {
                     List<DropStreamer> updatedStreamers = campaign.Streamers
                         .Select(streamer => statuses.TryGetValue(streamer.Login, out bool? isLive)
-                            ? streamer with { IsLive = isLive }
+                            ? streamer with { IsLive = isLive ?? streamer.IsLive }
                             : streamer)
                         .ToList();
 
@@ -347,37 +392,56 @@ namespace Core.Services
             value = null;
 
             if (TryGetBooleanProperty(element, "is_live", out bool isLive) ||
-                TryGetBooleanProperty(element, "isLive", out isLive))
+                TryGetBooleanProperty(element, "isLive", out isLive) ||
+                TryGetBooleanProperty(element, "is_online", out isLive) ||
+                TryGetBooleanProperty(element, "isOnline", out isLive) ||
+                TryGetBooleanProperty(element, "online", out isLive))
             {
                 value = isLive;
                 return true;
             }
 
-            if (element.TryGetProperty("livestream", out JsonElement livestream))
+            if (TryReadLiveObjectProperty(element, "livestream", out value) ||
+                TryReadLiveObjectProperty(element, "live_stream", out value) ||
+                TryReadLiveObjectProperty(element, "current_livestream", out value) ||
+                TryReadLiveObjectProperty(element, "stream", out value))
             {
-                value = livestream.ValueKind switch
-                {
-                    JsonValueKind.Object => true,
-                    JsonValueKind.Null => false,
-                    _ => null
-                };
-
-                return value.HasValue;
-            }
-
-            if (element.TryGetProperty("stream", out JsonElement stream))
-            {
-                value = stream.ValueKind switch
-                {
-                    JsonValueKind.Object => true,
-                    JsonValueKind.Null => false,
-                    _ => null
-                };
-
-                return value.HasValue;
+                return true;
             }
 
             return false;
+        }
+
+        private static bool TryReadLiveObjectProperty(JsonElement element, string propertyName, out bool? value)
+        {
+            value = null;
+
+            if (!element.TryGetProperty(propertyName, out JsonElement property))
+                return false;
+
+            value = property.ValueKind switch
+            {
+                JsonValueKind.Object => true,
+                JsonValueKind.Array => property.GetArrayLength() > 0,
+                JsonValueKind.Null => false,
+                JsonValueKind.False => false,
+                JsonValueKind.True => true,
+                _ => null
+            };
+
+            return value.HasValue;
+        }
+
+        private static string TrimForLog(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return "<empty>";
+
+            const int maxLength = 500;
+            string trimmed = value.Replace(Environment.NewLine, " ");
+            return trimmed.Length <= maxLength
+                ? trimmed
+                : trimmed[..maxLength] + "...";
         }
 
         private static bool TryGetBooleanProperty(JsonElement element, string propertyName, out bool value)
@@ -410,6 +474,12 @@ namespace Core.Services
             {
                 return rawResult;
             }
+        }
+
+        private sealed class KickAvailabilityLookupResult
+        {
+            public Dictionary<string, bool?> Statuses { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+            public Dictionary<string, string> Errors { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         }
     }
 }
