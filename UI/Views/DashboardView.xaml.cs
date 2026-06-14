@@ -64,6 +64,16 @@ namespace UI.Views
                 OnPropertyChanged();
             }
         }
+        private string _twitchLoginButtonText = "Login Twitch";
+        public string TwitchLoginButtonText
+        {
+            get => _twitchLoginButtonText;
+            set
+            {
+                _twitchLoginButtonText = value;
+                OnPropertyChanged();
+            }
+        }
 
         private string _kickConnectionStatus = "Not Connected";
         public string KickConnectionStatus
@@ -82,6 +92,16 @@ namespace UI.Views
             set
             {
                 _kickConnectionColor = value;
+                OnPropertyChanged();
+            }
+        }
+        private string _kickLoginButtonText = "Login Kick";
+        public string KickLoginButtonText
+        {
+            get => _kickLoginButtonText;
+            set
+            {
+                _kickLoginButtonText = value;
                 OnPropertyChanged();
             }
         }
@@ -474,9 +494,17 @@ namespace UI.Views
 
                 _activeCampaigns.Clear();
 
-                IReadOnlyList<DropsCampaign> allCampaigns = await _dropsService.GetAllActiveCampaignsAsync(_kickWebView, _kickService.Status, _twitchWebView, _twitchService.Status, _twitchGqlService, cts.Token);
+                IReadOnlyList<DropsCampaign> allCampaigns = await _dropsService.GetAllActiveCampaignsAsync(
+                    _kickWebView,
+                    _kickService.Status,
+                    _twitchWebView,
+                    _twitchService.Status,
+                    _twitchGqlService,
+                    cts.Token,
+                    AddPlatformCampaignsToView);
                 AppLogger.Info("Dashboard", $"Campaign load completed. totalCampaigns={allCampaigns.Count}, twitchStatus={_twitchService.Status}, kickStatus={_kickService.Status}");
 
+                _activeCampaigns.Clear();
                 foreach (DropsCampaign? c in allCampaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))
                     _activeCampaigns.Add(c);
 
@@ -505,6 +533,30 @@ namespace UI.Views
                 AppLogger.Info("Dashboard", "Watcher resumed after campaign refresh.");
             }
         }
+
+        private void AddPlatformCampaignsToView(IReadOnlyList<DropsCampaign> campaigns)
+        {
+            if (campaigns.Count == 0)
+                return;
+
+            List<DropsCampaign> currentCampaigns = new();
+
+            Dispatcher.Invoke(() =>
+            {
+                foreach (DropsCampaign campaign in campaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))
+                {
+                    if (_activeCampaigns.Any(existing => existing.Platform == campaign.Platform && existing.Id == campaign.Id))
+                        continue;
+
+                    _activeCampaigns.Add(campaign);
+                }
+
+                MinerStatusDetails = $"{_activeCampaigns.Count} active campaigns loaded so far";
+                currentCampaigns = _activeCampaigns.ToList();
+            });
+
+            DropsInventoryManager.Instance.UpdateCampaigns(currentCampaigns, _twitchGqlService, startWatching: false);
+        }
         /// <summary>
         /// Asynchronously validates the current Twitch credentials using the associated web view and service.
         /// </summary>
@@ -527,11 +579,28 @@ namespace UI.Views
         /// <returns>A task that represents the asynchronous validation operation.</returns>
         private async Task ValidateCredentialsAsync()
         {
+            List<Task> validationTasks = new();
+
             if (_twitchService.Status != ConnectionStatus.Connected)
-                await ValidateTwitchCredentialsAsync();
+                validationTasks.Add(ValidatePlatformCredentialsAsync("Twitch", ValidateTwitchCredentialsAsync));
 
             if (_kickService.Status != ConnectionStatus.Connected)
-                await ValidateKickCredentialsAsync();
+                validationTasks.Add(ValidatePlatformCredentialsAsync("Kick", ValidateKickCredentialsAsync));
+
+            if (validationTasks.Count != 0)
+                await Task.WhenAll(validationTasks);
+        }
+
+        private static async Task ValidatePlatformCredentialsAsync(string platform, Func<Task> validateAsync)
+        {
+            try
+            {
+                await validateAsync();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("Dashboard", $"{platform} credential validation failed.", ex);
+            }
         }
 
         #region Event Handlers
@@ -571,24 +640,28 @@ namespace UI.Views
                 case ConnectionStatus.NotConnected:
                     KickConnectionStatus = "Not Connected";
                     KickConnectionColor = "Red";
+                    KickLoginButtonText = "Login Kick";
                     KickLoginButton.IsEnabled = true;
                     break;
 
                 case ConnectionStatus.Validating:
                     KickConnectionStatus = "Validating...";
                     KickConnectionColor = "Orange";
+                    KickLoginButtonText = "Login Kick";
                     KickLoginButton.IsEnabled = false;
                     break;
 
                 case ConnectionStatus.Connected:
                     KickConnectionStatus = "Connected";
                     KickConnectionColor = "Lime";
+                    KickLoginButtonText = "Logged In Kick";
                     KickLoginButton.IsEnabled = false; // disable when already logged in
                     ScheduleDropsLoad();
                     break;
                 case ConnectionStatus.Connecting:
                     KickConnectionStatus = "Connecting...";
                     KickConnectionColor = "Yellow";
+                    KickLoginButtonText = "Login Kick";
                     KickLoginButton.IsEnabled = false;
                     break;
             }
@@ -606,24 +679,28 @@ namespace UI.Views
                 case ConnectionStatus.NotConnected:
                     TwitchConnectionStatus = "Not Connected";
                     TwitchConnectionColor = "Red";
+                    TwitchLoginButtonText = "Login Twitch";
                     TwitchLoginButton.IsEnabled = true;
                     break;
 
                 case ConnectionStatus.Validating:
                     TwitchConnectionStatus = "Validating...";
                     TwitchConnectionColor = "Orange";
+                    TwitchLoginButtonText = "Login Twitch";
                     TwitchLoginButton.IsEnabled = false;
                     break;
 
                 case ConnectionStatus.Connected:
                     TwitchConnectionStatus = "Connected";
                     TwitchConnectionColor = "Lime";
+                    TwitchLoginButtonText = "Logged In Twitch";
                     TwitchLoginButton.IsEnabled = false; // disable when already logged in
                     ScheduleDropsLoad();
                     break;
                 case ConnectionStatus.Connecting:
                     TwitchConnectionStatus = "Connecting...";
                     TwitchConnectionColor = "Yellow";
+                    TwitchLoginButtonText = "Login Twitch";
                     TwitchLoginButton.IsEnabled = false;
                     break;
             }

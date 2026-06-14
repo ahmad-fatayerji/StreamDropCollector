@@ -81,6 +81,7 @@ namespace Core.Services
 
                     // All the available channels for this campaign
                     List<string> connectUrls = new List<string>();
+                    List<DropStreamer> streamers = new List<DropStreamer>();
 
                     if (campaign.TryGetProperty("channels", out JsonElement channels) && channels.GetArrayLength() > 0)
                     {
@@ -91,7 +92,11 @@ namespace Core.Services
                                 : channel.GetProperty("user").GetProperty("username").GetString();
 
                             if (!string.IsNullOrEmpty(username))
-                                connectUrls.Add($"https://kick.com/{username.ToLowerInvariant()}");
+                            {
+                                string channelUrl = $"https://kick.com/{username.ToLowerInvariant()}";
+                                connectUrls.Add(channelUrl);
+                                streamers.Add(new DropStreamer(username, channelUrl, TryReadKickLiveStatus(channel)));
+                            }
                         }
                     }
 
@@ -100,7 +105,8 @@ namespace Core.Services
                     // Category-less campaigns (e.g. Watch ANYONE, in any category)
                     if (category.ValueKind == JsonValueKind.Undefined && connectUrls.Count == 0)
                     {
-                        connectUrls.Add("https://kick.com/browse?sort=viewers_high_to_low");
+                        const string directoryUrl = "https://kick.com/browse?sort=viewers_high_to_low";
+                        connectUrls.Add(directoryUrl);
                         general = true;
                     }
 
@@ -108,7 +114,8 @@ namespace Core.Services
                     if (connectUrls.Count == 0 && category.ValueKind != JsonValueKind.Undefined)
                     {
                         string slug = category.GetProperty("slug").GetString()!;
-                        connectUrls.Add($"https://kick.com/category/{slug}/drops");
+                        string directoryUrl = $"https://kick.com/category/{slug}/drops";
+                        connectUrls.Add(directoryUrl);
                         general = true;
                     }
 
@@ -130,6 +137,7 @@ namespace Core.Services
                             Rewards: rewards,
                             Platform: Platform,
                             ConnectUrls: connectUrls.AsReadOnly(),
+                            Streamers: streamers.AsReadOnly(),
                             IsGeneralDrop: general
                         ));
                     }
@@ -146,6 +154,7 @@ namespace Core.Services
                             Rewards: rewards,
                             Platform: Platform,
                             ConnectUrls: connectUrls.AsReadOnly(),
+                            Streamers: streamers.AsReadOnly(),
                             IsGeneralDrop: general
                         ));
                     }
@@ -214,14 +223,192 @@ namespace Core.Services
                     }
                 }
 
-                AppLogger.Debug("KickDrops", $"LOADED {campaigns.Count} campaigns with progress");
-                AppLogger.Info("KickDrops", $"Active campaigns fetched successfully. count={campaigns.Count}");
-                return campaigns.AsReadOnly();
+                IReadOnlyList<DropsCampaign> campaignsWithStreamerStatus = await AddKickStreamerAvailabilityAsync(host, campaigns, ct);
+
+                AppLogger.Debug("KickDrops", $"LOADED {campaignsWithStreamerStatus.Count} campaigns with progress");
+                AppLogger.Info("KickDrops", $"Active campaigns fetched successfully. count={campaignsWithStreamerStatus.Count}");
+                return campaignsWithStreamerStatus;
             }
             catch (Exception ex)
             {
                 AppLogger.Error("KickDrops", "Fetching active campaigns failed.", ex);
                 return [];
+            }
+        }
+
+        private static async Task<IReadOnlyList<DropsCampaign>> AddKickStreamerAvailabilityAsync(IWebViewHost host, IReadOnlyList<DropsCampaign> campaigns, CancellationToken ct)
+        {
+            List<string> unknownLogins = campaigns
+                .SelectMany(c => c.Streamers)
+                .Where(s => s.IsLive == null)
+                .Select(s => s.Login)
+                .Where(login => !string.IsNullOrWhiteSpace(login))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(50)
+                .ToList();
+
+            if (unknownLogins.Count == 0)
+                return campaigns;
+
+            try
+            {
+                string loginJson = JsonSerializer.Serialize(unknownLogins);
+                await host.NavigateAsync($"https://kick.com/?availabilityCheck={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
+
+                string script = $$"""
+                    (async () => {
+                        const logins = {{loginJson}};
+                        const results = {};
+
+                        await Promise.all(logins.map(async login => {
+                            const controller = new AbortController();
+                            const timeout = setTimeout(() => controller.abort(), 3500);
+
+                            try {
+                                const response = await fetch(`/api/v2/channels/${encodeURIComponent(login)}`, {
+                                    credentials: 'include',
+                                    signal: controller.signal
+                                });
+
+                                if (!response.ok) {
+                                    results[login] = false;
+                                    return;
+                                }
+
+                                const data = await response.json();
+                                if (typeof data?.is_live === 'boolean') {
+                                    results[login] = data.is_live;
+                                } else if (typeof data?.isLive === 'boolean') {
+                                    results[login] = data.isLive;
+                                } else if ('livestream' in data) {
+                                    results[login] = data.livestream !== null;
+                                } else if ('stream' in data) {
+                                    results[login] = data.stream !== null;
+                                } else {
+                                    results[login] = false;
+                                }
+                            } catch {
+                                results[login] = false;
+                            } finally {
+                                clearTimeout(timeout);
+                            }
+                        }));
+
+                        return JSON.stringify(results);
+                    })();
+                    """;
+
+                string rawResult = await host.ExecuteScriptAsync(script);
+                string? json = DecodeExecuteScriptStringResult(rawResult);
+                Dictionary<string, bool>? statuses = string.IsNullOrWhiteSpace(json)
+                    ? null
+                    : JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
+
+                if (statuses == null || statuses.Count == 0)
+                    return campaigns;
+
+                AppLogger.Info("KickDrops", $"Kick streamer availability lookup completed. requested={unknownLogins.Count}, resolved={statuses.Count}, live={statuses.Count(x => x.Value)}, offline={statuses.Count(x => !x.Value)}");
+
+                List<DropsCampaign> updatedCampaigns = new(campaigns.Count);
+                foreach (DropsCampaign campaign in campaigns)
+                {
+                    List<DropStreamer> updatedStreamers = campaign.Streamers
+                        .Select(streamer => statuses.TryGetValue(streamer.Login, out bool? isLive)
+                            ? streamer with { IsLive = isLive }
+                            : streamer)
+                        .ToList();
+
+                    updatedCampaigns.Add(campaign with { Streamers = updatedStreamers.AsReadOnly() });
+                }
+
+                return updatedCampaigns.AsReadOnly();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                AppLogger.Warn("KickDrops", $"Kick streamer availability lookup failed; leaving unknown statuses. {ex.Message}");
+                return campaigns;
+            }
+        }
+
+        private static bool? TryReadKickLiveStatus(JsonElement channel)
+        {
+            if (TryReadKickLiveStatusFromElement(channel, out bool? isLive))
+                return isLive;
+
+            if (channel.TryGetProperty("user", out JsonElement user) &&
+                TryReadKickLiveStatusFromElement(user, out isLive))
+                return isLive;
+
+            return null;
+        }
+
+        private static bool TryReadKickLiveStatusFromElement(JsonElement element, out bool? value)
+        {
+            value = null;
+
+            if (TryGetBooleanProperty(element, "is_live", out bool isLive) ||
+                TryGetBooleanProperty(element, "isLive", out isLive))
+            {
+                value = isLive;
+                return true;
+            }
+
+            if (element.TryGetProperty("livestream", out JsonElement livestream))
+            {
+                value = livestream.ValueKind switch
+                {
+                    JsonValueKind.Object => true,
+                    JsonValueKind.Null => false,
+                    _ => null
+                };
+
+                return value.HasValue;
+            }
+
+            if (element.TryGetProperty("stream", out JsonElement stream))
+            {
+                value = stream.ValueKind switch
+                {
+                    JsonValueKind.Object => true,
+                    JsonValueKind.Null => false,
+                    _ => null
+                };
+
+                return value.HasValue;
+            }
+
+            return false;
+        }
+
+        private static bool TryGetBooleanProperty(JsonElement element, string propertyName, out bool value)
+        {
+            value = false;
+
+            if (!element.TryGetProperty(propertyName, out JsonElement property) ||
+                property.ValueKind != JsonValueKind.True && property.ValueKind != JsonValueKind.False)
+            {
+                return false;
+            }
+
+            value = property.GetBoolean();
+            return true;
+        }
+
+        private static string? DecodeExecuteScriptStringResult(string rawResult)
+        {
+            if (string.IsNullOrWhiteSpace(rawResult))
+                return null;
+
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(rawResult);
+                return document.RootElement.ValueKind == JsonValueKind.String
+                    ? document.RootElement.GetString()
+                    : rawResult;
+            }
+            catch (JsonException)
+            {
+                return rawResult;
             }
         }
     }

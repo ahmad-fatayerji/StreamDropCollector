@@ -165,15 +165,62 @@ namespace Core.Services
                     updatedResult.Add(updatedCampaign);
                 }
 
-                // Return the new list
-                AppLogger.Info("TwitchDrops", $"Active campaigns fetched successfully. count={updatedResult.Count}");
-                return updatedResult.AsReadOnly();
+                IReadOnlyList<DropsCampaign> campaignsWithStreamerStatus = await AddTwitchStreamerAvailabilityAsync(updatedResult, ct);
+
+                AppLogger.Info("TwitchDrops", $"Active campaigns fetched successfully. count={campaignsWithStreamerStatus.Count}");
+                return campaignsWithStreamerStatus;
             }
             catch (Exception ex)
             {
                 AppLogger.Error("TwitchDrops", "Fetching active campaigns failed.", ex);
                 return [];
             }
+        }
+
+        private async Task<IReadOnlyList<DropsCampaign>> AddTwitchStreamerAvailabilityAsync(IReadOnlyList<DropsCampaign> campaigns, CancellationToken ct)
+        {
+            List<DropsCampaign> updatedCampaigns = new(campaigns.Count);
+
+            foreach (DropsCampaign campaign in campaigns)
+            {
+                if (campaign.Streamers.Count == 0 || string.IsNullOrWhiteSpace(campaign.Slug))
+                {
+                    updatedCampaigns.Add(campaign);
+                    continue;
+                }
+
+                List<string> logins = campaign.Streamers
+                    .Select(s => s.Login)
+                    .Where(login => !string.IsNullOrWhiteSpace(login))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (logins.Count == 0)
+                {
+                    updatedCampaigns.Add(campaign);
+                    continue;
+                }
+
+                try
+                {
+                    List<string> liveLogins = await gql.QueryLiveChannelsBySlugAsync(logins, campaign.Slug, ct);
+                    HashSet<string> liveLoginSet = liveLogins.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    List<DropStreamer> updatedStreamers = campaign.Streamers
+                        .Select(streamer => streamer with { IsLive = liveLoginSet.Contains(streamer.Login) })
+                        .ToList();
+
+                    updatedCampaigns.Add(campaign with { Streamers = updatedStreamers.AsReadOnly() });
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    AppLogger.Warn("TwitchDrops", $"Twitch streamer availability lookup failed for campaign '{campaign.Name}'; leaving unknown statuses. {ex.Message}");
+                    updatedCampaigns.Add(campaign);
+                }
+            }
+
+            AppLogger.Info("TwitchDrops", $"Twitch streamer availability lookup completed. campaigns={campaigns.Count}");
+            return updatedCampaigns.AsReadOnly();
         }
 
         /// <summary>
@@ -201,6 +248,7 @@ namespace Core.Services
             DateTimeOffset endsAt = DateTimeOffset.Parse(detailedData?["endAt"]?.GetValue<string>() ?? startsAt.AddDays(7).ToString("o"));
 
             List<string> connectUrls = new List<string>();
+            List<DropStreamer> streamers = new List<DropStreamer>();
 
             JsonObject? allow = detailedData?["allow"]?.AsObject();
             JsonArray? channels = allow?["channels"]?.AsArray();
@@ -216,12 +264,19 @@ namespace Core.Services
                     url = url != null ? $"https://www.twitch.tv/{url}" : null;
 
                     if (url != null)
+                    {
                         connectUrls.Add(url);
+                        streamers.Add(new DropStreamer(
+                            Login: channel?["name"]?.GetValue<string>() ?? url,
+                            Url: url
+                        ));
+                    }
                 }
             }
             else
             {
-                connectUrls.Add($"https://www.twitch.tv/directory/category/{slug}?filter=drops&sort=VIEWER_COUNT");
+                string directoryUrl = $"https://www.twitch.tv/directory/category/{slug}?filter=drops&sort=VIEWER_COUNT";
+                connectUrls.Add(directoryUrl);
                 isGeneralDrop = true;
             }
 
@@ -284,6 +339,7 @@ namespace Core.Services
                 Rewards: rewards.AsReadOnly(),
                 Platform: Platform.Twitch,
                 ConnectUrls: connectUrls,
+                Streamers: streamers.AsReadOnly(),
                 IsGeneralDrop: isGeneralDrop
             );
 
@@ -293,5 +349,6 @@ namespace Core.Services
 
             return dropCampaign;
         }
+
     }
 }

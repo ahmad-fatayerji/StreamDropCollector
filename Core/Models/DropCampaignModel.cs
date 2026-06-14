@@ -23,6 +23,27 @@ namespace Core.Models
         bool IsClaimed = false,
         string? DropInstanceId = null,
         bool IsCurrentReward = false);
+
+    /// <summary>
+    /// Represents a streamer attached to a drops campaign, including known live availability when the platform exposes it.
+    /// </summary>
+    /// <param name="Login">The streamer's login or display name.</param>
+    /// <param name="Url">The channel or directory URL.</param>
+    /// <param name="IsLive">true when live, false when confirmed offline, or null when live state is not known.</param>
+    public record DropStreamer(
+        string Login,
+        string Url,
+        bool? IsLive = null)
+    {
+        public string DisplayName => string.IsNullOrWhiteSpace(Login) ? Url : Login;
+        public string AvailabilityText => IsLive switch
+        {
+            true => "LIVE",
+            false => "OFFLINE",
+            _ => "UNKNOWN"
+        };
+    }
+
     /// <summary>
     /// Represents a campaign that offers in-game rewards through a drops program for a specific game and platform.
     /// </summary>
@@ -36,6 +57,7 @@ namespace Core.Models
     /// <param name="Rewards">A read-only list of rewards available in this campaign. Cannot be null or empty.</param>
     /// <param name="Platform">The platform on which the campaign is available.</param>
     /// <param name="ConnectUrls">A read-only list of URLs that users can use to connect their accounts for eligibility. Cannot be null.</param>
+    /// <param name="Streamers">A read-only list of streamers or directories that can progress this campaign.</param>
     /// <param name="IsCurrentCampaign">true if this campaign is currently being watched; otherwise, false. Defaults to false.</param>
     public record DropsCampaign(
         string Id,
@@ -48,9 +70,17 @@ namespace Core.Models
         IReadOnlyList<DropsReward> Rewards,
         Platform Platform,
         IReadOnlyList<string> ConnectUrls,
+        IReadOnlyList<DropStreamer> Streamers,
         bool IsGeneralDrop,
         bool IsCurrentCampaign = false)
     {
         public bool AllRewardsClaimed => Rewards.All(r => r.IsClaimed);
+        public int LiveStreamerCount => Streamers.Count(s => s.IsLive == true);
+        public bool HasKnownLiveStreamers => LiveStreamerCount > 0;
+        public string StreamerSummary => Streamers.Count == 0
+            ? "No streamers listed"
+            : LiveStreamerCount > 0
+                ? $"{LiveStreamerCount} live / {Streamers.Count} listed"
+                : $"{Streamers.Count} listed";
     }
 }

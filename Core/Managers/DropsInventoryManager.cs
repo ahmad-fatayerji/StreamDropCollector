@@ -698,227 +698,21 @@ namespace Core.Managers
                 List<DropsCampaign> twitchCampaigns = snapshot.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake()).ToList();
                 List<DropsCampaign> kickCampaigns = snapshot.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake()).ToList();
 
-                // ----------------------------------------------------------------
-                // Twitch handling
-                // ----------------------------------------------------------------
+                List<Task<DateTime?>> selectionTasks = new();
+
                 if (twitchCampaigns.Count != 0 && TwitchWebView != null)
-                {
-                    if (token.IsCancellationRequested)
-                        return;
+                    selectionTasks.Add(SelectTwitchCampaignToWatchAsync(twitchCampaigns, token));
 
-                    List<DropsCampaign> remainingTwitchCampaigns = [.. twitchCampaigns];
-                    while (remainingTwitchCampaigns.Count != 0)
-                    {
-                        DropsCampaign? bestTwitch = await SelectBestCampaign(remainingTwitchCampaigns);
-                        if (bestTwitch == null)
-                            break;
-
-                        if (token.IsCancellationRequested)
-                            return;
-
-                        string twitchUrl = await SelectTwitchStreamerForCampaign(bestTwitch);
-                        if (token.IsCancellationRequested)
-                            return;
-
-                        if (string.IsNullOrWhiteSpace(twitchUrl))
-                        {
-                            AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' produced empty streamer URL; trying next candidate.");
-                            remainingTwitchCampaigns.Remove(bestTwitch);
-                            continue;
-                        }
-
-                        await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(twitchUrl));
-                        await Task.Delay(1500);
-                        await DismissTwitchMatureContentGateAsync();
-                        await SetTwitchStreamToLowestQualityAsync();
-                        await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ForceRefreshAsync());
-                        await Task.Delay(5000);
-
-                        _currentTwitchCampaign = bestTwitch;
-
-                        // Prefer the authoritative GQL check (live + correct category) over fragile DOM
-                        // scraping; only fall back to DOM when GQL cannot determine the result.
-                        string twitchLogin = GetStreamerNameFromUrl(twitchUrl);
-                        bool? gqlEligible = await IsTwitchStreamEligibleViaGqlAsync(twitchLogin, bestTwitch.Slug);
-
-                        bool twitchOnline;
-                        bool twitchCorrectCategory;
-                        if (gqlEligible.HasValue)
-                        {
-                            twitchOnline = gqlEligible.Value;
-                            twitchCorrectCategory = gqlEligible.Value;
-                        }
-                        else
-                        {
-                            twitchOnline = await IsTwitchStreamOnline();
-                            twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
-                        }
-
-                        if (!twitchOnline || !twitchCorrectCategory)
-                        {
-                            AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' failed streamer eligibility. online={twitchOnline}, categoryOk={twitchCorrectCategory}");
-                            _currentTwitchCampaign = null;
-                            _currentTwitchLogin = null;
-                            UpdateCurrentSelectionFlags();
-                            remainingTwitchCampaigns.Remove(bestTwitch);
-                            continue;
-                        }
-
-                        _currentTwitchLogin = twitchLogin;
-                        _lastKnownTwitchOnlineState = true;
-                        UpdateCurrentSelectionFlags();
-
-                        // Sync baseline NOW - right after selection, before any further logic
-                        _twitchWatchedSeconds = bestTwitch.Rewards
-                            .Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
-
-                        DropsReward? nextTwitchReward = bestTwitch.Rewards
-                            .Where(r => !r.IsClaimed)
-                            .OrderBy(r => r.RequiredMinutes)
-                            .FirstOrDefault();
-
-                        int twitchMinutesBeforeNextReward = bestTwitch.Rewards
-                            .Where(r => !r.IsClaimed && r.RequiredMinutes < nextTwitchReward!.RequiredMinutes)
-                            .Sum(r => r.RequiredMinutes);
-                        _twitchDropWatchedSeconds = Math.Max(0, (nextTwitchReward?.ProgressMinutes ?? 0) - twitchMinutesBeforeNextReward) * 60;
-
-                        _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
-
-                        VerboseLog("SelectionBaseline",
-                            $"Twitch baseline SET | " +
-                            $"campaignId={bestTwitch.Id} | " +
-                            $"watchedSeconds={_twitchWatchedSeconds} | " +
-                            $"dropWatchedSeconds={_twitchDropWatchedSeconds} | " +
-                            $"appliedBucket={_twitchAppliedMinuteBucket}");
-
-                        VerboseLog("SelectionBaseline", $"Twitch campaignId={bestTwitch.Id}, campaignWatchedSecondsBaseline={_twitchWatchedSeconds}, dropWatchedSecondsBaseline={_twitchDropWatchedSeconds}, nextRewardId={nextTwitchReward?.Id ?? "none"}, unclaimedRewards={bestTwitch.Rewards.Count(r => !r.IsClaimed)}");
-
-                        byte initialTwitchPct = CalculateLiveCampaignProgress(bestTwitch);
-                        byte initialTwitchDropPct = CalculateLiveDropProgress(bestTwitch, _twitchDropWatchedSeconds);
-                        TwitchProgressChanged?.Invoke(initialTwitchPct, initialTwitchDropPct);
-                        RaiseTwitchDropChangedIfNeeded(nextTwitchReward);
-
-                        AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Watching Twitch stream: {twitchUrl}");
-                        AppLogger.Info("TwitchSelection", $"Selected Twitch stream '{twitchUrl}' for campaign '{bestTwitch.Name}' ({bestTwitch.Id}).");
-                        RememberLastStreamerUrl(Platform.Twitch, bestTwitch.Slug, twitchUrl);
-
-                        DropsReward? soonestTwitch = bestTwitch.Rewards
-                            .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
-                            .OrderBy(r => r.RequiredMinutes - r.ProgressMinutes)
-                            .FirstOrDefault();
-
-                        if (soonestTwitch != null)
-                        {
-                            DateTime est = DateTime.Now.AddMinutes(soonestTwitch.RequiredMinutes - soonestTwitch.ProgressMinutes);
-                            if (est < nextCheckAt)
-                                nextCheckAt = est;
-                        }
-
-                        break;
-                    }
-
-                    if (_currentTwitchCampaign == null)
-                    {
-                        AppLogger.Warn("TwitchSelection", $"No Twitch campaign passed eligibility checks. candidates={twitchCampaigns.Count}");
-                    }
-                }
-
-                // ----------------------------------------------------------------
-                // Kick handling
-                // ----------------------------------------------------------------
                 if (kickCampaigns.Count != 0 && KickWebView != null)
+                    selectionTasks.Add(SelectKickCampaignToWatchAsync(kickCampaigns, token));
+
+                if (selectionTasks.Count != 0)
                 {
-                    if (token.IsCancellationRequested)
-                        return;
-
-                    List<DropsCampaign> remainingKickCampaigns = [.. kickCampaigns];
-                    while (remainingKickCampaigns.Count != 0)
+                    DateTime?[] platformNextChecks = await Task.WhenAll(selectionTasks);
+                    foreach (DateTime? platformNextCheck in platformNextChecks)
                     {
-                        DropsCampaign? bestKick = await SelectBestCampaign(remainingKickCampaigns);
-                        if (bestKick == null)
-                            break;
-
-                        if (token.IsCancellationRequested)
-                            return;
-
-                        string kickUrl = await SelectKickStreamerForCampaign(bestKick);
-                        if (token.IsCancellationRequested)
-                            return;
-
-                        if (string.IsNullOrWhiteSpace(kickUrl))
-                        {
-                            AppLogger.Warn("KickSelection", $"Kick campaign '{bestKick.Name}' produced empty streamer URL; trying next candidate.");
-                            remainingKickCampaigns.Remove(bestKick);
-                            continue;
-                        }
-
-                        await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(kickUrl));
-                        await Task.Delay(1500);
-                        await DismissKickMatureContentGateAsync();
-                        await SetKickStreamToLowestQualityAsync();
-                        await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ForceRefreshAsync());
-                        await Task.Delay(5000);
-
-                        _currentKickCampaign = bestKick;
-                        bool kickOnline = await IsKickStreamOnline();
-                        bool kickCorrectCategory = await IsKickStreamCategoryCorrect();
-
-                        if (!kickOnline || !kickCorrectCategory)
-                        {
-                            AppLogger.Warn("KickSelection", $"Kick campaign '{bestKick.Name}' failed streamer eligibility. online={kickOnline}, categoryOk={kickCorrectCategory}");
-                            _currentKickCampaign = null;
-                            UpdateCurrentSelectionFlags();
-                            remainingKickCampaigns.Remove(bestKick);
-                            continue;
-                        }
-
-                        _lastKnownKickOnlineState = true;
-                        UpdateCurrentSelectionFlags();
-
-                        _kickWatchedSeconds = bestKick.Rewards
-                            .Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
-
-                        DropsReward? nextKickReward = bestKick.Rewards
-                            .Where(r => !r.IsClaimed)
-                            .OrderBy(r => r.RequiredMinutes)
-                            .FirstOrDefault();
-
-                        int kickMinutesBeforeNextReward = bestKick.Rewards
-                            .Where(r => !r.IsClaimed && r.RequiredMinutes < nextKickReward!.RequiredMinutes)
-                            .Sum(r => r.RequiredMinutes);
-                        _kickDropWatchedSeconds = Math.Max(0, (nextKickReward?.ProgressMinutes ?? 0) - kickMinutesBeforeNextReward) * 60;
-
-                        _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
-
-                        VerboseLog("SelectionBaseline", $"Kick campaignId={bestKick.Id}, campaignWatchedSecondsBaseline={_kickWatchedSeconds}, dropWatchedSecondsBaseline={_kickDropWatchedSeconds}, nextRewardId={nextKickReward?.Id ?? "none"}, unclaimedRewards={bestKick.Rewards.Count(r => !r.IsClaimed)}");
-
-                        byte initialKickPct = CalculateLiveCampaignProgress(bestKick);
-                        byte initialKickDropPct = CalculateLiveDropProgress(bestKick, _kickDropWatchedSeconds);
-                        KickProgressChanged?.Invoke(initialKickPct, initialKickDropPct);
-                        RaiseKickDropChangedIfNeeded(nextKickReward);
-
-                        AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Watching Kick stream: {kickUrl}");
-                        AppLogger.Info("KickSelection", $"Selected Kick stream '{kickUrl}' for campaign '{bestKick.Name}' ({bestKick.Id}).");
-                        RememberLastStreamerUrl(Platform.Kick, bestKick.Slug, kickUrl);
-
-                        DropsReward? soonestKick = bestKick.Rewards
-                            .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
-                            .OrderBy(r => (r.RequiredMinutes - r.ProgressMinutes))
-                            .FirstOrDefault();
-
-                        if (soonestKick != null)
-                        {
-                            DateTime est = DateTime.Now.AddMinutes(soonestKick.RequiredMinutes - soonestKick.ProgressMinutes);
-                            if (est < nextCheckAt)
-                                nextCheckAt = est;
-                        }
-
-                        break;
-                    }
-
-                    if (_currentKickCampaign == null)
-                    {
-                        AppLogger.Warn("KickSelection", $"No Kick campaign passed eligibility checks. candidates={kickCampaigns.Count}");
+                        if (platformNextCheck.HasValue && platformNextCheck.Value < nextCheckAt)
+                            nextCheckAt = platformNextCheck.Value;
                     }
                 }
 
@@ -955,6 +749,211 @@ namespace Core.Managers
             {
                 _startWatchingLock.Release();
             }
+        }
+
+        private async Task<DateTime?> SelectTwitchCampaignToWatchAsync(List<DropsCampaign> twitchCampaigns, CancellationToken token)
+        {
+            if (token.IsCancellationRequested)
+                return null;
+
+            List<DropsCampaign> remainingTwitchCampaigns = [.. twitchCampaigns];
+            while (remainingTwitchCampaigns.Count != 0)
+            {
+                DropsCampaign? bestTwitch = await SelectBestCampaign(remainingTwitchCampaigns);
+                if (bestTwitch == null)
+                    break;
+
+                if (token.IsCancellationRequested)
+                    return null;
+
+                string twitchUrl = await SelectTwitchStreamerForCampaign(bestTwitch);
+                if (token.IsCancellationRequested)
+                    return null;
+
+                if (string.IsNullOrWhiteSpace(twitchUrl))
+                {
+                    AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' produced empty streamer URL; trying next candidate.");
+                    remainingTwitchCampaigns.Remove(bestTwitch);
+                    continue;
+                }
+
+                await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.NavigateAsync(twitchUrl));
+                await Task.Delay(1500);
+                await DismissTwitchMatureContentGateAsync();
+                await SetTwitchStreamToLowestQualityAsync();
+                await await Application.Current.Dispatcher.InvokeAsync(async () => await TwitchWebView!.ForceRefreshAsync());
+                await Task.Delay(5000);
+
+                _currentTwitchCampaign = bestTwitch;
+
+                string twitchLogin = GetStreamerNameFromUrl(twitchUrl);
+                bool? gqlEligible = await IsTwitchStreamEligibleViaGqlAsync(twitchLogin, bestTwitch.Slug);
+
+                bool twitchOnline;
+                bool twitchCorrectCategory;
+                if (gqlEligible.HasValue)
+                {
+                    twitchOnline = gqlEligible.Value;
+                    twitchCorrectCategory = gqlEligible.Value;
+                }
+                else
+                {
+                    twitchOnline = await IsTwitchStreamOnline();
+                    twitchCorrectCategory = await IsTwitchStreamCategoryCorrect();
+                }
+
+                if (!twitchOnline || !twitchCorrectCategory)
+                {
+                    AppLogger.Warn("TwitchSelection", $"Twitch campaign '{bestTwitch.Name}' failed streamer eligibility. online={twitchOnline}, categoryOk={twitchCorrectCategory}");
+                    _currentTwitchCampaign = null;
+                    _currentTwitchLogin = null;
+                    UpdateCurrentSelectionFlags();
+                    remainingTwitchCampaigns.Remove(bestTwitch);
+                    continue;
+                }
+
+                _currentTwitchLogin = twitchLogin;
+                _lastKnownTwitchOnlineState = true;
+                UpdateCurrentSelectionFlags();
+
+                _twitchWatchedSeconds = bestTwitch.Rewards
+                    .Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
+
+                DropsReward? nextTwitchReward = bestTwitch.Rewards
+                    .Where(r => !r.IsClaimed)
+                    .OrderBy(r => r.RequiredMinutes)
+                    .FirstOrDefault();
+
+                int twitchMinutesBeforeNextReward = bestTwitch.Rewards
+                    .Where(r => !r.IsClaimed && r.RequiredMinutes < nextTwitchReward!.RequiredMinutes)
+                    .Sum(r => r.RequiredMinutes);
+                _twitchDropWatchedSeconds = Math.Max(0, (nextTwitchReward?.ProgressMinutes ?? 0) - twitchMinutesBeforeNextReward) * 60;
+
+                _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
+
+                VerboseLog("SelectionBaseline",
+                    $"Twitch baseline SET | " +
+                    $"campaignId={bestTwitch.Id} | " +
+                    $"watchedSeconds={_twitchWatchedSeconds} | " +
+                    $"dropWatchedSeconds={_twitchDropWatchedSeconds} | " +
+                    $"appliedBucket={_twitchAppliedMinuteBucket}");
+
+                VerboseLog("SelectionBaseline", $"Twitch campaignId={bestTwitch.Id}, campaignWatchedSecondsBaseline={_twitchWatchedSeconds}, dropWatchedSecondsBaseline={_twitchDropWatchedSeconds}, nextRewardId={nextTwitchReward?.Id ?? "none"}, unclaimedRewards={bestTwitch.Rewards.Count(r => !r.IsClaimed)}");
+
+                byte initialTwitchPct = CalculateLiveCampaignProgress(bestTwitch);
+                byte initialTwitchDropPct = CalculateLiveDropProgress(bestTwitch, _twitchDropWatchedSeconds);
+                TwitchProgressChanged?.Invoke(initialTwitchPct, initialTwitchDropPct);
+                RaiseTwitchDropChangedIfNeeded(nextTwitchReward);
+
+                AppLogger.Debug("TwitchSelection", $"[DropsInventoryManager] Watching Twitch stream: {twitchUrl}");
+                AppLogger.Info("TwitchSelection", $"Selected Twitch stream '{twitchUrl}' for campaign '{bestTwitch.Name}' ({bestTwitch.Id}).");
+                RememberLastStreamerUrl(Platform.Twitch, bestTwitch.Slug, twitchUrl);
+
+                DropsReward? soonestTwitch = bestTwitch.Rewards
+                    .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
+                    .OrderBy(r => r.RequiredMinutes - r.ProgressMinutes)
+                    .FirstOrDefault();
+
+                return soonestTwitch != null
+                    ? DateTime.Now.AddMinutes(soonestTwitch.RequiredMinutes - soonestTwitch.ProgressMinutes)
+                    : null;
+            }
+
+            if (_currentTwitchCampaign == null)
+                AppLogger.Warn("TwitchSelection", $"No Twitch campaign passed eligibility checks. candidates={twitchCampaigns.Count}");
+
+            return null;
+        }
+
+        private async Task<DateTime?> SelectKickCampaignToWatchAsync(List<DropsCampaign> kickCampaigns, CancellationToken token)
+        {
+            if (token.IsCancellationRequested)
+                return null;
+
+            List<DropsCampaign> remainingKickCampaigns = [.. kickCampaigns];
+            while (remainingKickCampaigns.Count != 0)
+            {
+                DropsCampaign? bestKick = await SelectBestCampaign(remainingKickCampaigns);
+                if (bestKick == null)
+                    break;
+
+                if (token.IsCancellationRequested)
+                    return null;
+
+                string kickUrl = await SelectKickStreamerForCampaign(bestKick);
+                if (token.IsCancellationRequested)
+                    return null;
+
+                if (string.IsNullOrWhiteSpace(kickUrl))
+                {
+                    AppLogger.Warn("KickSelection", $"Kick campaign '{bestKick.Name}' produced empty streamer URL; trying next candidate.");
+                    remainingKickCampaigns.Remove(bestKick);
+                    continue;
+                }
+
+                await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.NavigateAsync(kickUrl));
+                await Task.Delay(1500);
+                await DismissKickMatureContentGateAsync();
+                await SetKickStreamToLowestQualityAsync();
+                await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ForceRefreshAsync());
+                await Task.Delay(5000);
+
+                _currentKickCampaign = bestKick;
+                bool kickOnline = await IsKickStreamOnline();
+                bool kickCorrectCategory = await IsKickStreamCategoryCorrect();
+
+                if (!kickOnline || !kickCorrectCategory)
+                {
+                    AppLogger.Warn("KickSelection", $"Kick campaign '{bestKick.Name}' failed streamer eligibility. online={kickOnline}, categoryOk={kickCorrectCategory}");
+                    _currentKickCampaign = null;
+                    UpdateCurrentSelectionFlags();
+                    remainingKickCampaigns.Remove(bestKick);
+                    continue;
+                }
+
+                _lastKnownKickOnlineState = true;
+                UpdateCurrentSelectionFlags();
+
+                _kickWatchedSeconds = bestKick.Rewards
+                    .Sum(r => Math.Min(r.ProgressMinutes, r.RequiredMinutes) * 60);
+
+                DropsReward? nextKickReward = bestKick.Rewards
+                    .Where(r => !r.IsClaimed)
+                    .OrderBy(r => r.RequiredMinutes)
+                    .FirstOrDefault();
+
+                int kickMinutesBeforeNextReward = bestKick.Rewards
+                    .Where(r => !r.IsClaimed && r.RequiredMinutes < nextKickReward!.RequiredMinutes)
+                    .Sum(r => r.RequiredMinutes);
+                _kickDropWatchedSeconds = Math.Max(0, (nextKickReward?.ProgressMinutes ?? 0) - kickMinutesBeforeNextReward) * 60;
+
+                _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
+
+                VerboseLog("SelectionBaseline", $"Kick campaignId={bestKick.Id}, campaignWatchedSecondsBaseline={_kickWatchedSeconds}, dropWatchedSecondsBaseline={_kickDropWatchedSeconds}, nextRewardId={nextKickReward?.Id ?? "none"}, unclaimedRewards={bestKick.Rewards.Count(r => !r.IsClaimed)}");
+
+                byte initialKickPct = CalculateLiveCampaignProgress(bestKick);
+                byte initialKickDropPct = CalculateLiveDropProgress(bestKick, _kickDropWatchedSeconds);
+                KickProgressChanged?.Invoke(initialKickPct, initialKickDropPct);
+                RaiseKickDropChangedIfNeeded(nextKickReward);
+
+                AppLogger.Debug("KickSelection", $"[DropsInventoryManager] Watching Kick stream: {kickUrl}");
+                AppLogger.Info("KickSelection", $"Selected Kick stream '{kickUrl}' for campaign '{bestKick.Name}' ({bestKick.Id}).");
+                RememberLastStreamerUrl(Platform.Kick, bestKick.Slug, kickUrl);
+
+                DropsReward? soonestKick = bestKick.Rewards
+                    .Where(r => !r.IsClaimed && r.ProgressMinutes < r.RequiredMinutes)
+                    .OrderBy(r => r.RequiredMinutes - r.ProgressMinutes)
+                    .FirstOrDefault();
+
+                return soonestKick != null
+                    ? DateTime.Now.AddMinutes(soonestKick.RequiredMinutes - soonestKick.ProgressMinutes)
+                    : null;
+            }
+
+            if (_currentKickCampaign == null)
+                AppLogger.Warn("KickSelection", $"No Kick campaign passed eligibility checks. candidates={kickCampaigns.Count}");
+
+            return null;
         }
         /// <summary>
         /// Marks the specified reward as claimed in the active campaign with the given campaign identifier.

@@ -1,6 +1,7 @@
-﻿using Core.Interfaces;
-using Core.Models;
 using Core.Enums;
+using Core.Interfaces;
+using Core.Logging;
+using Core.Models;
 
 namespace Core.Services
 {
@@ -12,7 +13,6 @@ namespace Core.Services
     public class DropsService
     {
         private readonly KickDropsProvider _kickProvider = new();
-        private TwitchDropsProvider? _twitchProvider;
 
         /// <summary>
         /// Retrieves all active drops campaigns from connected Kick and Twitch hosts asynchronously.
@@ -28,27 +28,67 @@ namespace Core.Services
         /// <param name="ct">A cancellation token that can be used to cancel the asynchronous operation.</param>
         /// <returns>A read-only list containing all active drops campaigns from the specified connected hosts. The list will be
         /// empty if neither host is connected or no campaigns are found.</returns>
-        public async Task<IReadOnlyList<DropsCampaign>> GetAllActiveCampaignsAsync(IWebViewHost kickHost, ConnectionStatus? kickStatus, IWebViewHost twitchHost, ConnectionStatus? twitchStatus, IGqlService? gqlService, CancellationToken ct = default)
+        public async Task<IReadOnlyList<DropsCampaign>> GetAllActiveCampaignsAsync(
+            IWebViewHost kickHost,
+            ConnectionStatus? kickStatus,
+            IWebViewHost twitchHost,
+            ConnectionStatus? twitchStatus,
+            IGqlService? gqlService,
+            CancellationToken ct = default,
+            Action<IReadOnlyList<DropsCampaign>>? platformCampaignsFetched = null)
         {
-            List<Task<IReadOnlyList<DropsCampaign>>> tasks = new List<Task<IReadOnlyList<DropsCampaign>>>();
+            Task<IReadOnlyList<DropsCampaign>>? kickFetchTask = null;
+            Task<IReadOnlyList<DropsCampaign>>? twitchFetchTask = null;
 
             if (kickStatus == ConnectionStatus.Connected)
-                tasks.Add(_kickProvider.GetActiveCampaignsAsync(kickHost, ct));
+                kickFetchTask = FetchPlatformCampaignsAsync("Kick", () => _kickProvider.GetActiveCampaignsAsync(kickHost, ct), ct, platformCampaignsFetched);
 
             if (twitchStatus == ConnectionStatus.Connected)
             {
-                _twitchProvider = new TwitchDropsProvider(gqlService!);
-
-                tasks.Add(_twitchProvider.GetActiveCampaignsAsync(twitchHost, ct));
+                TwitchDropsProvider twitchProvider = new(gqlService!);
+                twitchFetchTask = FetchPlatformCampaignsAsync("Twitch", () => twitchProvider.GetActiveCampaignsAsync(twitchHost, ct), ct, platformCampaignsFetched);
             }
 
-            // If nothing to do -> return fast
-            if (tasks.Count == 0)
+            List<Task<IReadOnlyList<DropsCampaign>>> fetchTasks = new();
+
+            if (kickFetchTask != null)
+                fetchTasks.Add(kickFetchTask);
+
+            if (twitchFetchTask != null)
+                fetchTasks.Add(twitchFetchTask);
+
+            if (fetchTasks.Count == 0)
                 return Array.Empty<DropsCampaign>().AsReadOnly();
 
-            IReadOnlyList<DropsCampaign>[] results = await Task.WhenAll(tasks);
+            IReadOnlyList<DropsCampaign>[] results = await Task.WhenAll(fetchTasks);
+            return results.SelectMany(x => x).ToList().AsReadOnly();
+        }
 
-            return results.SelectMany(x => x ?? []).ToList().AsReadOnly();
+        private static async Task<IReadOnlyList<DropsCampaign>> FetchPlatformCampaignsAsync(
+            string platform,
+            Func<Task<IReadOnlyList<DropsCampaign>>> fetchAsync,
+            CancellationToken ct,
+            Action<IReadOnlyList<DropsCampaign>>? platformCampaignsFetched)
+        {
+            try
+            {
+                await Task.Yield();
+
+                AppLogger.Info("DropsService", $"{platform} campaign fetch started.");
+                IReadOnlyList<DropsCampaign> campaigns = await fetchAsync();
+                AppLogger.Info("DropsService", $"{platform} campaign fetch completed. count={campaigns.Count}");
+                platformCampaignsFetched?.Invoke(campaigns);
+                return campaigns;
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Error("DropsService", $"{platform} campaign fetch failed.", ex);
+                return Array.Empty<DropsCampaign>();
+            }
         }
     }
 }
