@@ -46,7 +46,7 @@ jobs:
               id: prev_tag
               shell: pwsh
               run: |
-                  $prev = git tag --sort=-version:refname | Where-Object { $_ -ne "${{ github.ref_name }}" } | Select-Object -First 1
+                  $prev = git tag --sort=-creatordate | Where-Object { $_ -ne "${{ github.ref_name }}" -and $_ -ne "nightly" } | Select-Object -First 1
                   echo "tag=$prev" >> $env:GITHUB_OUTPUT
 
             - name: Create release
