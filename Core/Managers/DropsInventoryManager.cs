@@ -658,9 +658,20 @@ namespace Core.Managers
 
                         bool claimResult = false;
                         if (parentCampaign.Platform == Platform.Twitch && _twitchGqlService != null)
+                        {
                             claimResult = await _twitchGqlService.ClaimDropAsync(parentCampaign.Id, item.Id);
+                        }
                         else if (parentCampaign.Platform == Platform.Kick)
+                        {
+                            bool kickServerReady = await VerifyKickRewardReadyForClaimAsync(parentCampaign, item, token);
+                            if (!kickServerReady)
+                            {
+                                nextCheckAt = DateTime.Now.AddMinutes(1);
+                                continue;
+                            }
+
                             claimResult = await await Application.Current.Dispatcher.InvokeAsync(async () => await KickWebView!.ClaimKickDropAsync(parentCampaign.Id, item.Id));
+                        }
 
                         if (claimResult)
                         {
@@ -1080,6 +1091,177 @@ namespace Core.Managers
 
             return updated;
         }
+
+        private async Task<bool> VerifyKickRewardReadyForClaimAsync(DropsCampaign campaign, DropsReward reward, CancellationToken token)
+        {
+            if (KickWebView == null)
+            {
+                AppLogger.Warn("KickClaim", $"Kick claim readiness check skipped because webview is unavailable. campaignId={campaign.Id}, rewardId={reward.Id}");
+                return false;
+            }
+
+            try
+            {
+                string rawProgress = await await Application.Current.Dispatcher.InvokeAsync(
+                    async () => await KickWebView.CaptureProgressResponseAsync(10000, token));
+
+                ApplyKickServerProgressToActiveCampaigns(rawProgress);
+
+                if (!TryReadKickRewardProgress(rawProgress, campaign.Id, reward.Id, out int serverProgressMinutes, out bool serverClaimed))
+                {
+                    AppLogger.Warn("KickClaim", $"Kick claim readiness check could not find reward in server progress payload. campaignId={campaign.Id}, rewardId={reward.Id}");
+                    return false;
+                }
+
+                bool ready = !serverClaimed && serverProgressMinutes >= reward.RequiredMinutes;
+                if (!ready)
+                {
+                    AppLogger.Warn(
+                        "KickClaim",
+                        $"Kick claim blocked by server progress check. campaignId={campaign.Id}, rewardId={reward.Id}, serverProgress={serverProgressMinutes}, required={reward.RequiredMinutes}, claimed={serverClaimed}");
+                }
+
+                return ready;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickClaim", $"Kick claim readiness check failed. campaignId={campaign.Id}, rewardId={reward.Id}. {ex.Message}");
+                return false;
+            }
+        }
+
+        private void ApplyKickServerProgressToActiveCampaigns(string rawProgress)
+        {
+            if (string.IsNullOrWhiteSpace(rawProgress))
+                return;
+
+            Dictionary<string, KickCampaignProgressState> progressByCampaign;
+            try
+            {
+                progressByCampaign = ParseKickProgressPayload(rawProgress);
+            }
+            catch (Exception ex)
+            {
+                AppLogger.Warn("KickClaim", $"Failed to parse Kick server progress payload for local correction. {ex.Message}");
+                return;
+            }
+
+            if (progressByCampaign.Count == 0)
+                return;
+
+            Application.Current.Dispatcher.Invoke(() =>
+            {
+                for (int campaignIndex = 0; campaignIndex < ActiveCampaigns.Count; campaignIndex++)
+                {
+                    DropsCampaign campaign = ActiveCampaigns[campaignIndex];
+                    if (campaign.Platform != Platform.Kick)
+                        continue;
+
+                    if (!progressByCampaign.TryGetValue(campaign.Id, out KickCampaignProgressState? serverState))
+                        continue;
+
+                    bool changed = false;
+                    List<DropsReward> updatedRewards = new List<DropsReward>(campaign.Rewards.Count);
+                    foreach (DropsReward reward in campaign.Rewards)
+                    {
+                        if (!serverState.ClaimedByRewardId.TryGetValue(reward.Id, out bool serverClaimed))
+                        {
+                            updatedRewards.Add(reward);
+                            continue;
+                        }
+
+                        int serverProgress = Math.Min(serverState.ProgressMinutes, reward.RequiredMinutes);
+                        DropsReward updatedReward = reward with
+                        {
+                            ProgressMinutes = serverProgress,
+                            IsClaimed = serverClaimed
+                        };
+
+                        changed |= updatedReward != reward;
+                        updatedRewards.Add(updatedReward);
+                    }
+
+                    if (!changed)
+                        continue;
+
+                    DropsCampaign updatedCampaign = campaign with { Rewards = updatedRewards };
+                    ActiveCampaigns[campaignIndex] = updatedCampaign;
+
+                    if (_currentKickCampaign?.Id == updatedCampaign.Id)
+                        _currentKickCampaign = updatedCampaign;
+                }
+
+                UpdateCurrentSelectionFlags();
+            });
+        }
+
+        private static bool TryReadKickRewardProgress(
+            string rawProgress,
+            string campaignId,
+            string rewardId,
+            out int progressMinutes,
+            out bool claimed)
+        {
+            progressMinutes = 0;
+            claimed = false;
+
+            Dictionary<string, KickCampaignProgressState> progressByCampaign = ParseKickProgressPayload(rawProgress);
+            if (!progressByCampaign.TryGetValue(campaignId, out KickCampaignProgressState? campaignState))
+                return false;
+
+            progressMinutes = campaignState.ProgressMinutes;
+            return campaignState.ClaimedByRewardId.TryGetValue(rewardId, out claimed);
+        }
+
+        private static Dictionary<string, KickCampaignProgressState> ParseKickProgressPayload(string rawProgress)
+        {
+            Dictionary<string, KickCampaignProgressState> result = new Dictionary<string, KickCampaignProgressState>(StringComparer.OrdinalIgnoreCase);
+
+            using JsonDocument progressDoc = JsonDocument.Parse(rawProgress);
+            if (!progressDoc.RootElement.TryGetProperty("data", out JsonElement progressArray) || progressArray.ValueKind != JsonValueKind.Array)
+                return result;
+
+            foreach (JsonElement item in progressArray.EnumerateArray())
+            {
+                if (!item.TryGetProperty("id", out JsonElement campaignIdElement))
+                    continue;
+
+                string? campaignId = campaignIdElement.GetString();
+                if (string.IsNullOrWhiteSpace(campaignId))
+                    continue;
+
+                int progressMinutes = item.TryGetProperty("progress_units", out JsonElement progressElement) && progressElement.TryGetInt32(out int parsedProgress)
+                    ? parsedProgress
+                    : 0;
+
+                Dictionary<string, bool> claimedByRewardId = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                if (item.TryGetProperty("rewards", out JsonElement rewardsElement) && rewardsElement.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (JsonElement reward in rewardsElement.EnumerateArray())
+                    {
+                        if (!reward.TryGetProperty("id", out JsonElement rewardIdElement))
+                            continue;
+
+                        string? rewardId = rewardIdElement.GetString();
+                        if (string.IsNullOrWhiteSpace(rewardId))
+                            continue;
+
+                        bool rewardClaimed = reward.TryGetProperty("claimed", out JsonElement claimedElement) && claimedElement.ValueKind == JsonValueKind.True;
+                        claimedByRewardId[rewardId] = rewardClaimed;
+                    }
+                }
+
+                result[campaignId] = new KickCampaignProgressState(progressMinutes, claimedByRewardId);
+            }
+
+            return result;
+        }
+
+        private sealed record KickCampaignProgressState(int ProgressMinutes, IReadOnlyDictionary<string, bool> ClaimedByRewardId);
         /// <summary>
         /// Updates the selection flags for active campaigns and their rewards to reflect the current campaign and
         /// reward based on the active platform and progress.
