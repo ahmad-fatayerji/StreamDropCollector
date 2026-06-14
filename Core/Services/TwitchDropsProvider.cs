@@ -14,6 +14,8 @@ namespace Core.Services
     /// view host to access Twitch campaign data.</remarks>
     public class TwitchDropsProvider(IGqlService gql) : DropsCampaignProviderBase
     {
+        private const int MaxTwitchStreamerAvailabilityLookupsPerCampaign = 150;
+
         /// <summary>
         /// Gets the platform associated with this instance.
         /// </summary>
@@ -199,13 +201,13 @@ namespace Core.Services
                     continue;
                 }
 
-                List<string> logins = campaign.Streamers
+                List<string> allLogins = campaign.Streamers
                     .Select(s => s.Login)
                     .Where(login => !string.IsNullOrWhiteSpace(login))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
-                if (logins.Count == 0)
+                if (allLogins.Count == 0)
                 {
                     updatedCampaigns.Add(campaign);
                     continue;
@@ -213,6 +215,14 @@ namespace Core.Services
 
                 try
                 {
+                    List<string> logins = allLogins
+                        .Take(MaxTwitchStreamerAvailabilityLookupsPerCampaign)
+                        .ToList();
+
+                    int skipped = allLogins.Count - logins.Count;
+                    if (skipped > 0)
+                        AppLogger.Warn("TwitchDrops", $"Twitch streamer availability lookup capped for campaign '{campaign.Name}'. listedStreamers={campaign.Streamers.Count}, distinct={allLogins.Count}, requested={logins.Count}, skipped={skipped}");
+
                     List<string> liveLogins = await gql.QueryLiveChannelsBySlugAsync(logins, campaign.Slug, ct);
                     HashSet<string> liveLoginSet = liveLogins.ToHashSet(StringComparer.OrdinalIgnoreCase);
 

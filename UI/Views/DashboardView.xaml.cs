@@ -30,6 +30,7 @@ namespace UI.Views
 
         private static bool _initialValidationCompleted = false;
         private static bool _isInitialized = false;
+        private const string FakeStreamersEnvironmentVariable = "SDC_FAKE_STREAMERS";
 
         private static readonly Lazy<DashboardView> _instance = new(() => new DashboardView());
         public static DashboardView Instance => _instance.Value;
@@ -539,11 +540,12 @@ namespace UI.Views
             if (campaigns.Count == 0)
                 return;
 
+            IReadOnlyList<DropsCampaign> displayCampaigns = ApplyFakeStreamersForUiTesting(campaigns);
             List<DropsCampaign> currentCampaigns = new();
 
             Dispatcher.Invoke(() =>
             {
-                foreach (DropsCampaign campaign in campaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))
+                foreach (DropsCampaign campaign in displayCampaigns.OrderBy(x => x.Platform).ThenBy(x => x.GameName))
                 {
                     int existingIndex = _activeCampaigns
                         .Select((existing, index) => new { existing, index })
@@ -560,11 +562,43 @@ namespace UI.Views
                 }
 
                 MinerStatusDetails = $"{_activeCampaigns.Count} active campaigns loaded so far";
-                UpdatePlatformProgressPreview(campaigns);
+                UpdatePlatformProgressPreview(displayCampaigns);
                 currentCampaigns = _activeCampaigns.ToList();
             });
 
             DropsInventoryManager.Instance.UpdateCampaigns(currentCampaigns, _twitchGqlService, startWatching: false);
+        }
+
+        private static IReadOnlyList<DropsCampaign> ApplyFakeStreamersForUiTesting(IReadOnlyList<DropsCampaign> campaigns)
+        {
+            string? configuredCount = Environment.GetEnvironmentVariable(FakeStreamersEnvironmentVariable);
+            if (!int.TryParse(configuredCount, out int fakeStreamerCount) || fakeStreamerCount <= 0)
+                return campaigns;
+
+            fakeStreamerCount = Math.Clamp(fakeStreamerCount, 1, 500);
+            AppLogger.Warn("Dashboard", $"Applying UI streamer test data. {FakeStreamersEnvironmentVariable}={fakeStreamerCount}");
+
+            return campaigns
+                .Select(campaign =>
+                {
+                    List<DropStreamer> fakeStreamers = Enumerable.Range(1, fakeStreamerCount)
+                        .Select(index =>
+                        {
+                            bool? isLive = index % 9 == 0
+                                ? true
+                                : index % 5 == 0
+                                    ? false
+                                    : null;
+                            string login = $"{campaign.Platform.ToString().ToLowerInvariant()}_test_{index:000}";
+                            string platformHost = campaign.Platform == Platform.Kick ? "kick.com" : "twitch.tv";
+                            return new DropStreamer(login, $"https://{platformHost}/{login}", isLive);
+                        })
+                        .ToList();
+
+                    return campaign with { Streamers = fakeStreamers.AsReadOnly() };
+                })
+                .ToList()
+                .AsReadOnly();
         }
 
         private void UpdatePlatformProgressPreview(IReadOnlyList<DropsCampaign> campaigns)

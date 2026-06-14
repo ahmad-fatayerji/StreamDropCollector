@@ -9,6 +9,173 @@
              d:DesignHeight="900" d:DesignWidth="1200"
              Background="{DynamicResource MainBackgroundBrush}">
 
+    <UserControl.Resources>
+        <Style x:Key="StreamerExpanderStyle" TargetType="Expander">
+            <Setter Property="Visibility" Value="Collapsed"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Expander">
+                        <StackPanel>
+                            <ToggleButton x:Name="HeaderToggle"
+                                          IsChecked="{Binding IsExpanded, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay}"
+                                          Content="{TemplateBinding Header}"
+                                          HorizontalAlignment="Left"
+                                          Cursor="Hand"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          Padding="0">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="HeaderBorder"
+                                                CornerRadius="6"
+                                                BorderBrush="{DynamicResource BorderBrush}"
+                                                BorderThickness="1"
+                                                Background="{DynamicResource CardBackgroundBrush}"
+                                                Padding="8,5">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <Path x:Name="Arrow"
+                                                      Width="8"
+                                                      Height="8"
+                                                      Margin="0,0,8,0"
+                                                      VerticalAlignment="Center"
+                                                      Fill="{DynamicResource TextMutedBrush}"
+                                                      Stretch="Uniform"
+                                                      Data="M 0 0 L 8 4 L 0 8 Z"/>
+
+                                                <ContentPresenter Grid.Column="1"
+                                                                  Content="{TemplateBinding Content}"
+                                                                  RecognizesAccessKey="True"
+                                                                  VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Arrow" Property="RenderTransform">
+                                                    <Setter.Value>
+                                                        <RotateTransform Angle="90" CenterX="4" CenterY="4"/>
+                                                    </Setter.Value>
+                                                </Setter>
+                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="HeaderBorder" Property="BorderBrush" Value="{DynamicResource SecondaryAccentBrush}"/>
+                                                <Setter TargetName="Arrow" Property="Fill" Value="{DynamicResource SecondaryAccentBrush}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+
+                            <Border x:Name="ContentBorder"
+                                    Visibility="Collapsed"
+                                    Margin="0,6,0,0"
+                                    Padding="8"
+                                    CornerRadius="6"
+                                    Background="{DynamicResource MainBackgroundBrush}"
+                                    BorderBrush="{DynamicResource BorderBrush}"
+                                    BorderThickness="1">
+                                <ContentPresenter/>
+                            </Border>
+                        </StackPanel>
+
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsExpanded" Value="True">
+                                <Setter TargetName="ContentBorder" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding HasAdditionalStreamers}" Value="True">
+                    <Setter Property="Visibility" Value="Visible"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <DataTemplate x:Key="StreamerChipTemplate">
+            <Button Command="{Binding DataContext.OpenStreamerCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                    CommandParameter="{Binding}"
+                    Cursor="Hand"
+                    Padding="0"
+                    Margin="0,0,6,6"
+                    BorderThickness="0"
+                    Background="Transparent">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <ContentPresenter/>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Button.Style>
+
+                <Border CornerRadius="6"
+                        Padding="8,4"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsLive}" Value="True">
+                                    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding IsLive}" Value="False">
+                                    <Setter Property="BorderBrush" Value="#FF6666"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Ellipse Width="8" Height="8" Margin="0,0,6,0">
+                            <Ellipse.Style>
+                                <Style TargetType="Ellipse">
+                                    <Setter Property="Fill" Value="{DynamicResource TextMutedBrush}"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLive}" Value="True">
+                                            <Setter Property="Fill" Value="{DynamicResource AccentBrush}"/>
+                                        </DataTrigger>
+                                        <DataTrigger Binding="{Binding IsLive}" Value="False">
+                                            <Setter Property="Fill" Value="#FF6666"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </Ellipse.Style>
+                        </Ellipse>
+
+                        <TextBlock Text="{Binding DisplayName}"
+                                   Foreground="{DynamicResource TextPrimaryBrush}"
+                                   FontSize="12"
+                                   MaxWidth="130"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center"/>
+
+                        <TextBlock Text="{Binding AvailabilityText}"
+                                   Foreground="{DynamicResource TextMutedBrush}"
+                                   FontSize="10"
+                                   FontWeight="SemiBold"
+                                   Margin="8,0,0,0"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+            </Button>
+        </DataTemplate>
+    </UserControl.Resources>
+
     <Grid Margin="20">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
@@ -140,89 +307,63 @@
                                                        Margin="10,0,0,0"/>
                                         </StackPanel>
 
-                                        <ScrollViewer MaxHeight="88"
-                                                      VerticalScrollBarVisibility="Auto"
-                                                      HorizontalScrollBarVisibility="Disabled">
-                                            <ItemsControl ItemsSource="{Binding Streamers}">
+                                        <WrapPanel>
+                                            <ItemsControl ItemsSource="{Binding PreviewStreamers}"
+                                                          ItemTemplate="{StaticResource StreamerChipTemplate}">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
                                                         <WrapPanel/>
                                                     </ItemsPanelTemplate>
                                                 </ItemsControl.ItemsPanel>
-
-                                                <ItemsControl.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <Button Command="{Binding DataContext.OpenStreamerCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
-                                                                CommandParameter="{Binding}"
-                                                                Cursor="Hand"
-                                                                Padding="0"
-                                                                Margin="0,0,6,6"
-                                                                BorderThickness="0"
-                                                                Background="Transparent">
-                                                            <Button.Style>
-                                                                <Style TargetType="Button">
-                                                                    <Setter Property="Template">
-                                                                        <Setter.Value>
-                                                                            <ControlTemplate TargetType="Button">
-                                                                                <ContentPresenter/>
-                                                                            </ControlTemplate>
-                                                                        </Setter.Value>
-                                                                    </Setter>
-                                                                </Style>
-                                                            </Button.Style>
-
-                                                            <Border CornerRadius="6"
-                                                                    Padding="8,4"
-                                                                    BorderBrush="{DynamicResource BorderBrush}"
-                                                                    BorderThickness="1">
-                                                                <Border.Style>
-                                                                    <Style TargetType="Border">
-                                                                        <Setter Property="Background" Value="{DynamicResource CardBackgroundBrush}"/>
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding IsLive}" Value="True">
-                                                                                <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
-                                                                            </DataTrigger>
-                                                                            <DataTrigger Binding="{Binding IsLive}" Value="False">
-                                                                                <Setter Property="BorderBrush" Value="#FF6666"/>
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </Border.Style>
-
-                                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                                                    <Ellipse Width="8" Height="8" Margin="0,0,6,0">
-                                                                        <Ellipse.Style>
-                                                                            <Style TargetType="Ellipse">
-                                                                                <Setter Property="Fill" Value="#FF6666"/>
-                                                                                <Style.Triggers>
-                                                                                    <DataTrigger Binding="{Binding IsLive}" Value="True">
-                                                                                        <Setter Property="Fill" Value="{DynamicResource AccentBrush}"/>
-                                                                                    </DataTrigger>
-                                                                                </Style.Triggers>
-                                                                            </Style>
-                                                                        </Ellipse.Style>
-                                                                    </Ellipse>
-
-                                                                    <TextBlock Text="{Binding DisplayName}"
-                                                                               Foreground="{DynamicResource TextPrimaryBrush}"
-                                                                               FontSize="12"
-                                                                               MaxWidth="130"
-                                                                               TextTrimming="CharacterEllipsis"
-                                                                               VerticalAlignment="Center"/>
-
-                                                                    <TextBlock Text="{Binding AvailabilityText}"
-                                                                               Foreground="{DynamicResource TextMutedBrush}"
-                                                                               FontSize="10"
-                                                                               FontWeight="SemiBold"
-                                                                               Margin="8,0,0,0"
-                                                                               VerticalAlignment="Center"/>
-                                                                </StackPanel>
-                                                            </Border>
-                                                        </Button>
-                                                    </DataTemplate>
-                                                </ItemsControl.ItemTemplate>
                                             </ItemsControl>
-                                        </ScrollViewer>
+
+                                            <Border CornerRadius="6"
+                                                    Padding="8,4"
+                                                    Margin="0,0,6,6"
+                                                    BorderBrush="{DynamicResource BorderBrush}"
+                                                    BorderThickness="1"
+                                                    Background="{DynamicResource CardBackgroundBrush}">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding HasAdditionalStreamers}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+
+                                                <TextBlock Text="{Binding AdditionalStreamerSummary}"
+                                                           Foreground="{DynamicResource TextMutedBrush}"
+                                                           FontSize="12"
+                                                           FontWeight="SemiBold"/>
+                                            </Border>
+                                        </WrapPanel>
+
+                                        <Expander Margin="0,2,0,0"
+                                                  Style="{StaticResource StreamerExpanderStyle}">
+                                            <Expander.Header>
+                                                <TextBlock Text="Show all streamers"
+                                                           FontSize="12"
+                                                           FontWeight="SemiBold"
+                                                           Foreground="{DynamicResource SecondaryAccentBrush}"/>
+                                            </Expander.Header>
+
+                                            <ScrollViewer MaxHeight="150"
+                                                          Margin="0,6,0,0"
+                                                          VerticalScrollBarVisibility="Auto"
+                                                          HorizontalScrollBarVisibility="Disabled">
+                                                <ItemsControl ItemsSource="{Binding Streamers}"
+                                                              ItemTemplate="{StaticResource StreamerChipTemplate}">
+                                                    <ItemsControl.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <WrapPanel/>
+                                                        </ItemsPanelTemplate>
+                                                    </ItemsControl.ItemsPanel>
+                                                </ItemsControl>
+                                            </ScrollViewer>
+                                        </Expander>
                                     </StackPanel>
 
                                     <!-- Watch button - only shown when NOT the current campaign -->

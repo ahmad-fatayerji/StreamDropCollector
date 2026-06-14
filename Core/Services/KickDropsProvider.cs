@@ -13,6 +13,9 @@ namespace Core.Services
     /// functionality from DropsCampaignProviderBase and specializes it for the Kick platform.</remarks>
     public class KickDropsProvider : DropsCampaignProviderBase
     {
+        private const int MaxKickStreamerAvailabilityLookups = 150;
+        private const int KickStreamerAvailabilityBatchSize = 25;
+
         /// <summary>
         /// Gets the streaming platform associated with this instance.
         /// </summary>
@@ -248,15 +251,14 @@ namespace Core.Services
 
         private static async Task<IReadOnlyList<DropsCampaign>> AddKickStreamerAvailabilityAsync(IWebViewHost host, IReadOnlyList<DropsCampaign> campaigns, CancellationToken ct)
         {
-            List<string> streamerLogins = campaigns
+            List<string> allStreamerLogins = campaigns
                 .SelectMany(c => c.Streamers)
                 .Select(s => s.Login)
                 .Where(login => !string.IsNullOrWhiteSpace(login))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(50)
                 .ToList();
 
-            if (streamerLogins.Count == 0)
+            if (allStreamerLogins.Count == 0)
             {
                 AppLogger.Info("KickDrops", "Kick streamer availability lookup skipped. listedStreamers=0");
                 return campaigns;
@@ -264,12 +266,83 @@ namespace Core.Services
 
             try
             {
-                AppLogger.Info("KickDrops", $"Kick streamer availability lookup started. listedStreamers={campaigns.SelectMany(c => c.Streamers).Count()}, requested={streamerLogins.Count}");
+                List<string> streamerLogins = allStreamerLogins
+                    .Take(MaxKickStreamerAvailabilityLookups)
+                    .ToList();
 
-                string loginJson = JsonSerializer.Serialize(streamerLogins);
+                int skipped = allStreamerLogins.Count - streamerLogins.Count;
+                if (skipped > 0)
+                    AppLogger.Warn("KickDrops", $"Kick streamer availability lookup capped. listedStreamers={campaigns.SelectMany(c => c.Streamers).Count()}, distinct={allStreamerLogins.Count}, requested={streamerLogins.Count}, skipped={skipped}");
+
+                AppLogger.Info("KickDrops", $"Kick streamer availability lookup started. listedStreamers={campaigns.SelectMany(c => c.Streamers).Count()}, requested={streamerLogins.Count}, batchSize={KickStreamerAvailabilityBatchSize}");
+
                 await host.NavigateAsync($"https://kick.com/?availabilityCheck={DateTimeOffset.Now.ToUnixTimeMilliseconds()}");
 
-                string script = $$"""
+                Dictionary<string, bool?> statuses = new(StringComparer.OrdinalIgnoreCase);
+                Dictionary<string, string> errors = new(StringComparer.OrdinalIgnoreCase);
+
+                for (int i = 0; i < streamerLogins.Count; i += KickStreamerAvailabilityBatchSize)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    List<string> batch = streamerLogins
+                        .Skip(i)
+                        .Take(KickStreamerAvailabilityBatchSize)
+                        .ToList();
+
+                    KickAvailabilityLookupResult? batchResult = await ExecuteKickStreamerAvailabilityBatchAsync(host, batch);
+                    if (batchResult?.Statuses == null || batchResult.Statuses.Count == 0)
+                    {
+                        AppLogger.Warn("KickDrops", $"Kick streamer availability batch returned no statuses. offset={i}, batchSize={batch.Count}");
+                        continue;
+                    }
+
+                    foreach ((string login, bool? isLive) in batchResult.Statuses)
+                        statuses[login] = isLive;
+
+                    foreach ((string login, string error) in batchResult.Errors)
+                        errors[login] = error;
+                }
+
+                if (statuses.Count == 0)
+                {
+                    AppLogger.Warn("KickDrops", "Kick streamer availability lookup returned no statuses across all batches.");
+                    return campaigns;
+                }
+
+                int liveCount = statuses.Count(x => x.Value == true);
+                int offlineCount = statuses.Count(x => x.Value == false);
+                int unknownCount = statuses.Count(x => x.Value == null);
+                string errorSummary = errors.Count > 0
+                    ? string.Join("; ", errors.Take(5).Select(x => $"{x.Key}={x.Value}"))
+                    : "none";
+                AppLogger.Info("KickDrops", $"Kick streamer availability lookup completed. requested={streamerLogins.Count}, resolved={statuses.Count}, live={liveCount}, offline={offlineCount}, unknown={unknownCount}, skipped={skipped}, errors={errorSummary}");
+
+                List<DropsCampaign> updatedCampaigns = new(campaigns.Count);
+                foreach (DropsCampaign campaign in campaigns)
+                {
+                    List<DropStreamer> updatedStreamers = campaign.Streamers
+                        .Select(streamer => statuses.TryGetValue(streamer.Login, out bool? isLive)
+                            ? streamer with { IsLive = isLive ?? streamer.IsLive }
+                            : streamer)
+                        .ToList();
+
+                    updatedCampaigns.Add(campaign with { Streamers = updatedStreamers.AsReadOnly() });
+                }
+
+                return updatedCampaigns.AsReadOnly();
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                AppLogger.Warn("KickDrops", $"Kick streamer availability lookup failed; leaving unknown statuses. {ex.Message}");
+                return campaigns;
+            }
+        }
+
+        private static async Task<KickAvailabilityLookupResult?> ExecuteKickStreamerAvailabilityBatchAsync(IWebViewHost host, IReadOnlyList<string> streamerLogins)
+        {
+            string loginJson = JsonSerializer.Serialize(streamerLogins);
+            string script = $$"""
                     (() => {
                         const logins = {{loginJson}};
                         const statuses = {};
@@ -333,46 +406,18 @@ namespace Core.Services
                     })();
                     """;
 
-                string rawResult = await host.ExecuteScriptAsync(script);
-                string? json = DecodeExecuteScriptStringResult(rawResult);
-                KickAvailabilityLookupResult? lookupResult = string.IsNullOrWhiteSpace(json)
-                    ? null
-                    : JsonSerializer.Deserialize<KickAvailabilityLookupResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                Dictionary<string, bool?>? statuses = lookupResult?.Statuses;
+            string rawResult = await host.ExecuteScriptAsync(script);
+            string? json = DecodeExecuteScriptStringResult(rawResult);
+            KickAvailabilityLookupResult? lookupResult = string.IsNullOrWhiteSpace(json)
+                ? null
+                : JsonSerializer.Deserialize<KickAvailabilityLookupResult>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-                if (statuses == null || statuses.Count == 0)
-                {
-                    AppLogger.Warn("KickDrops", $"Kick streamer availability lookup returned no statuses. rawResult={TrimForLog(rawResult)}, decoded={TrimForLog(json)}");
-                    return campaigns;
-                }
-
-                int liveCount = statuses.Count(x => x.Value == true);
-                int offlineCount = statuses.Count(x => x.Value == false);
-                int unknownCount = statuses.Count(x => x.Value == null);
-                string errorSummary = lookupResult?.Errors is { Count: > 0 }
-                    ? string.Join("; ", lookupResult.Errors.Take(5).Select(x => $"{x.Key}={x.Value}"))
-                    : "none";
-                AppLogger.Info("KickDrops", $"Kick streamer availability lookup completed. requested={streamerLogins.Count}, resolved={statuses.Count}, live={liveCount}, offline={offlineCount}, unknown={unknownCount}, errors={errorSummary}");
-
-                List<DropsCampaign> updatedCampaigns = new(campaigns.Count);
-                foreach (DropsCampaign campaign in campaigns)
-                {
-                    List<DropStreamer> updatedStreamers = campaign.Streamers
-                        .Select(streamer => statuses.TryGetValue(streamer.Login, out bool? isLive)
-                            ? streamer with { IsLive = isLive ?? streamer.IsLive }
-                            : streamer)
-                        .ToList();
-
-                    updatedCampaigns.Add(campaign with { Streamers = updatedStreamers.AsReadOnly() });
-                }
-
-                return updatedCampaigns.AsReadOnly();
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            if (lookupResult?.Statuses == null || lookupResult.Statuses.Count == 0)
             {
-                AppLogger.Warn("KickDrops", $"Kick streamer availability lookup failed; leaving unknown statuses. {ex.Message}");
-                return campaigns;
+                AppLogger.Warn("KickDrops", $"Kick streamer availability batch returned no statuses. rawResult={TrimForLog(rawResult)}, decoded={TrimForLog(json)}");
             }
+
+            return lookupResult;
         }
 
         private static bool? TryReadKickLiveStatus(JsonElement channel)

@@ -77,6 +77,15 @@ namespace Core.Models
         public bool AllRewardsClaimed => Rewards.All(r => r.IsClaimed);
         public int LiveStreamerCount => Streamers.Count(s => s.IsLive == true);
         public bool HasKnownLiveStreamers => LiveStreamerCount > 0;
+        public IReadOnlyList<DropStreamer> PreviewStreamers => Streamers
+            .OrderBy(s => s.IsLive == true ? 0 : s.IsLive == null ? 1 : 2)
+            .ThenBy(s => s.DisplayName)
+            .Take(8)
+            .ToList()
+            .AsReadOnly();
+        public bool HasAdditionalStreamers => Streamers.Count > PreviewStreamers.Count;
+        public int AdditionalStreamerCount => Math.Max(0, Streamers.Count - PreviewStreamers.Count);
+        public string AdditionalStreamerSummary => $"+ {AdditionalStreamerCount} more";
         public string StreamerSummary => Streamers.Count == 0
             ? "No streamers listed"
             : LiveStreamerCount > 0
