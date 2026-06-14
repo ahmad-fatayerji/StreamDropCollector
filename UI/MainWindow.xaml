@@ -31,7 +31,10 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border Background="{TemplateBinding Background}" CornerRadius="6">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
                             <ContentPresenter VerticalAlignment="Center" Margin="6,0"/>
                         </Border>
                     </ControlTemplate>
@@ -98,10 +101,10 @@
                                FontSize="16"
                                HorizontalAlignment="Center"
                                Margin="0 0 0 25"/>
-                    <Button Content="Dashboard" Tag="Dashboard" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
-                    <Button Content="Inventory" Tag="Inventory" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
-                    <Button Content="Settings" Tag="Settings" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
-                    <Button Content="Help" Tag="Help" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
+                    <Button x:Name="DashboardNavButton" Content="Dashboard" Tag="Dashboard" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
+                    <Button x:Name="InventoryNavButton" Content="Inventory" Tag="Inventory" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
+                    <Button x:Name="SettingsNavButton" Content="Settings" Tag="Settings" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
+                    <Button x:Name="HelpNavButton" Content="Help" Tag="Help" Click="SidebarButton_Click" Style="{StaticResource NavButtonStyle}"/>
                 </StackPanel>
             </Border>
 

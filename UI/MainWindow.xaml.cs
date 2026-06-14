@@ -214,6 +214,8 @@ namespace UI
         /// <param name="newPage">The new <see cref="UserControl"/> to display as the main content. Cannot be null.</param>
         private void SwitchPage(UserControl newPage)
         {
+            UpdateSidebarSelection(GetPageKey(newPage));
+
             // Same instance? Do nothing (prevents flicker + no new WebViews)
             if (ReferenceEquals(_currentPage, newPage))
                 return;
@@ -241,6 +243,51 @@ namespace UI
                 DoubleAnimation fadeIn = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(200));
 
                 newPage.BeginAnimation(OpacityProperty, fadeIn);
+            }
+        }
+
+        private static string? GetPageKey(UserControl page)
+        {
+            return page switch
+            {
+                DashboardView => "Dashboard",
+                InventoryView => "Inventory",
+                SettingsView => "Settings",
+                HelpView => "Help",
+                _ => null
+            };
+        }
+
+        private void UpdateSidebarSelection(string? selectedPageKey)
+        {
+            Button[] navButtons =
+            [
+                DashboardNavButton,
+                InventoryNavButton,
+                SettingsNavButton,
+                HelpNavButton
+            ];
+
+            foreach (Button button in navButtons)
+            {
+                bool isSelected = string.Equals(button.Tag?.ToString(), selectedPageKey, StringComparison.Ordinal);
+
+                if (isSelected)
+                {
+                    button.SetResourceReference(BackgroundProperty, "SidebarHoverBrush");
+                    button.SetResourceReference(ForegroundProperty, "TextPrimaryBrush");
+                    button.SetResourceReference(BorderBrushProperty, "AccentBrush");
+                    button.BorderThickness = new Thickness(4, 0, 0, 0);
+                    button.FontWeight = FontWeights.SemiBold;
+                }
+                else
+                {
+                    button.ClearValue(BackgroundProperty);
+                    button.ClearValue(ForegroundProperty);
+                    button.ClearValue(BorderBrushProperty);
+                    button.ClearValue(BorderThicknessProperty);
+                    button.ClearValue(FontWeightProperty);
+                }
             }
         }
         /// <summary>

@@ -103,7 +103,7 @@ namespace Core.Managers
             AppLogger.Info("Miner", $"User manually switched to campaign '{campaign.Name}' ({campaign.Id}).");
             _pinnedCampaignId = campaign.Id;
             SavePinnedCampaignToDisk();
-            await StartWatchingStreams(true);
+            await StartWatchingStreams(true, campaign.Platform);
         });
 
         public ICommand OpenStreamerCommand => new Utility.RelayCommand<DropStreamer>(streamer =>
@@ -229,8 +229,8 @@ namespace Core.Managers
                     return;
                 }
 
-                AppLogger.Debug("Miner", $"Immediate re-evaluation starting after whitelist change. activeCampaigns={ActiveCampaigns.Count}");
-                await StartWatchingStreams(true);
+                AppLogger.Debug("Miner", $"Immediate re-evaluation starting after whitelist change. platform={platform}, activeCampaigns={ActiveCampaigns.Count}");
+                await StartWatchingStreams(true, platform);
                 AppLogger.Info("Miner", "Immediate re-evaluation completed after whitelist change.");
             }
             catch (Exception ex)
@@ -564,13 +564,14 @@ namespace Core.Managers
         /// stopped. The method is safe to call repeatedly; any previous monitoring timers are stopped and disposed
         /// before starting new ones.</remarks>
         /// <returns>A task that represents the asynchronous operation of starting and managing stream monitoring.</returns>
-        public async Task StartWatchingStreams(bool restartedInternally = false)
+        public async Task StartWatchingStreams(bool restartedInternally = false, Platform? targetPlatform = null)
         {
             await _startWatchingLock.WaitAsync();
             try
             {
                 VerboseLog("StartWatching",
                     $"ENTERING StartWatchingStreams | restarted={restartedInternally} | " +
+                    $"targetPlatform={targetPlatform?.ToString() ?? "All"} | " +
                     $"paused={_isPaused} | activeCampaigns={ActiveCampaigns.Count} | " +
                     $"twitchCurrent={_currentTwitchCampaign?.Id ?? "null"} | " +
                     $"kickCurrent={_currentKickCampaign?.Id ?? "null"} | " +
@@ -587,24 +588,31 @@ namespace Core.Managers
                 _liveProgressTimer?.Stop();
                 List<DropsCampaign> campaignSnapshot = Application.Current.Dispatcher.Invoke(() => ActiveCampaigns.ToList());
 
-                // Reset current selections and progress
-                TwitchChannelChanged?.Invoke(string.Empty);
-                TwitchCampaignChanged?.Invoke(string.Empty, null);
-                _lastTwitchDropId = null;
-                TwitchDropChanged?.Invoke(string.Empty, null);
-                TwitchProgressChanged?.Invoke(0, 0);
-                KickChannelChanged?.Invoke(string.Empty);
-                KickCampaignChanged?.Invoke(string.Empty, null);
-                _lastKickDropId = null;
-                KickDropChanged?.Invoke(string.Empty, null);
-                KickProgressChanged?.Invoke(0, 0);
+                bool evaluateTwitch = targetPlatform is null or Platform.Twitch;
+                bool evaluateKick = targetPlatform is null or Platform.Kick;
+
+                // Reset internal selection for the platform being re-evaluated, but keep the dashboard populated
+                // until a new selection is known or the platform has no viable stream.
+                if (evaluateTwitch)
+                {
+                    _currentTwitchCampaign = null;
+                    _currentTwitchLogin = null;
+                    _lastTwitchDropId = null;
+                }
+
+                if (evaluateKick)
+                {
+                    _currentKickCampaign = null;
+                    _lastKickDropId = null;
+                }
+
                 _twitchAppliedMinuteBucket = _twitchWatchedSeconds / 60;
                 _kickAppliedMinuteBucket = _kickWatchedSeconds / 60;
 
                 VerboseLog("StartWatching", $"AFTER reset | twitchApplied={_twitchAppliedMinuteBucket} | kickApplied={_kickAppliedMinuteBucket}");
 
                 AppLogger.Debug("Miner", "[DropsInventoryManager] Starting stream watching process...");
-                AppLogger.Info("Miner", $"StartWatchingStreams invoked. restartedInternally={restartedInternally}, activeCampaigns={ActiveCampaigns.Count}, paused={_isPaused}");
+                AppLogger.Info("Miner", $"StartWatchingStreams invoked. restartedInternally={restartedInternally}, targetPlatform={targetPlatform?.ToString() ?? "All"}, activeCampaigns={ActiveCampaigns.Count}, paused={_isPaused}");
 
                 if (!restartedInternally)
                     MinerStatusChanged?.Invoke("Starting");
@@ -619,13 +627,15 @@ namespace Core.Managers
                 _recheckTimer = null;
                 _streamHealthTimer = null;
 
-                if (!campaignSnapshot.Any())
+                List<DropsCampaign> scopedSnapshot = targetPlatform == null
+                    ? campaignSnapshot
+                    : campaignSnapshot.Where(c => c.Platform == targetPlatform.Value).ToList();
+
+                if (!scopedSnapshot.Any())
                 {
                     AppLogger.Debug("Miner", "[DropsInventoryManager] No active campaigns with progress to make. Stopping stream watching.");
                     AppLogger.Info("Miner", "No active campaigns found during start; switching to Idle.");
-                    MinerStatusChanged?.Invoke("Idle");
-                    _currentTwitchCampaign = null;
-                    _currentKickCampaign = null;
+                    ClearDashboardForEvaluatedPlatforms(evaluateTwitch, evaluateKick);
                     UpdateCurrentSelectionFlags();
                     return;
                 }
@@ -636,13 +646,13 @@ namespace Core.Managers
                 DateTime nextCheckAt = DateTime.Now.AddHours(1); // Fallback: recheck in 1 hour
 
                 // Get a list of ready to claim rewards
-                List<DropsReward> readyToClaimRewards = [.. campaignSnapshot.SelectMany(c => c.Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes >= r.RequiredMinutes))];
+                List<DropsReward> readyToClaimRewards = [.. scopedSnapshot.SelectMany(c => c.Rewards.Where(r => !r.IsClaimed && r.ProgressMinutes >= r.RequiredMinutes))];
 
                 if (UISettingsManager.Instance.AutoClaimRewards)
                 {
                     foreach (DropsReward item in readyToClaimRewards)
                     {
-                        DropsCampaign? parentCampaign = campaignSnapshot.FirstOrDefault(c => c.Rewards.Contains(item));
+                        DropsCampaign? parentCampaign = scopedSnapshot.FirstOrDefault(c => c.Rewards.Contains(item));
                         if (parentCampaign == null)
                             continue;
 
@@ -680,11 +690,11 @@ namespace Core.Managers
                 }
 
                 List<DropsCampaign> snapshot = campaignSnapshot;
-                List<DropsCampaign> readyToClaimOnlyCampaigns = snapshot
+                List<DropsCampaign> readyToClaimOnlyCampaigns = scopedSnapshot
                     .Where(c => c.HasReadyToClaimRewards() && !c.HasProgressToMake())
                     .ToList();
 
-                if (!snapshot.Any(c => c.HasProgressToMake()))
+                if (!scopedSnapshot.Any(c => c.HasProgressToMake()))
                 {
                     if (readyToClaimOnlyCampaigns.Any())
                     {
@@ -693,9 +703,7 @@ namespace Core.Managers
 
                     AppLogger.Debug("Miner", "[DropsInventoryManager] No campaigns with progress to make after claim. Stopping stream watching.");
                     AppLogger.Info("Miner", "No campaigns with progress after claim pass; switching to Idle.");
-                    MinerStatusChanged?.Invoke("Idle");
-                    _currentTwitchCampaign = null;
-                    _currentKickCampaign = null;
+                    ClearDashboardForEvaluatedPlatforms(evaluateTwitch, evaluateKick);
                     UpdateCurrentSelectionFlags();
                     return;
                 }
@@ -704,26 +712,40 @@ namespace Core.Managers
                     return;
 
                 // Group campaigns by platform
-                List<DropsCampaign> twitchCampaigns = snapshot.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake()).ToList();
-                List<DropsCampaign> kickCampaigns = snapshot.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake()).ToList();
+                List<DropsCampaign> twitchCampaigns = evaluateTwitch
+                    ? snapshot.Where(c => c.Platform == Platform.Twitch && c.HasProgressToMake()).ToList()
+                    : new List<DropsCampaign>();
+                List<DropsCampaign> kickCampaigns = evaluateKick
+                    ? snapshot.Where(c => c.Platform == Platform.Kick && c.HasProgressToMake()).ToList()
+                    : new List<DropsCampaign>();
 
-                List<Task<DateTime?>> selectionTasks = new();
+                List<(Platform Platform, Task<DateTime?> Task)> selectionTasks = new();
 
                 if (twitchCampaigns.Count != 0 && TwitchWebView != null)
-                    selectionTasks.Add(SelectTwitchCampaignToWatchAsync(twitchCampaigns, token));
+                    selectionTasks.Add((Platform.Twitch, SelectTwitchCampaignToWatchAsync(twitchCampaigns, token)));
 
                 if (kickCampaigns.Count != 0 && KickWebView != null)
-                    selectionTasks.Add(SelectKickCampaignToWatchAsync(kickCampaigns, token));
+                    selectionTasks.Add((Platform.Kick, SelectKickCampaignToWatchAsync(kickCampaigns, token)));
 
                 if (selectionTasks.Count != 0)
                 {
-                    DateTime?[] platformNextChecks = await Task.WhenAll(selectionTasks);
-                    foreach (DateTime? platformNextCheck in platformNextChecks)
+                    DateTime?[] platformNextChecks = await Task.WhenAll(selectionTasks.Select(x => x.Task));
+                    for (int i = 0; i < platformNextChecks.Length; i++)
                     {
+                        DateTime? platformNextCheck = platformNextChecks[i];
                         if (platformNextCheck.HasValue && platformNextCheck.Value < nextCheckAt)
+                        {
                             nextCheckAt = platformNextCheck.Value;
+                            targetPlatform = selectionTasks[i].Platform;
+                        }
                     }
                 }
+
+                if (evaluateTwitch && _currentTwitchCampaign == null)
+                    ClearPlatformDashboard(Platform.Twitch);
+
+                if (evaluateKick && _currentKickCampaign == null)
+                    ClearPlatformDashboard(Platform.Kick);
 
                 if (_currentTwitchCampaign == null && _currentKickCampaign == null)
                 {
@@ -744,7 +766,7 @@ namespace Core.Managers
                     _recheckTimer?.Stop();
                     AppLogger.Debug("Miner", "[DropsInventoryManager] Re-evaluating streams for active campaigns.");
                     AppLogger.Info("Miner", "Scheduled re-evaluation triggered.");
-                    await StartWatchingStreams(true);
+                    await StartWatchingStreams(true, targetPlatform);
                 };
                 _recheckTimer.AutoReset = false;
                 _recheckTimer.Start();
@@ -758,6 +780,40 @@ namespace Core.Managers
             {
                 _startWatchingLock.Release();
             }
+        }
+
+        private void ClearDashboardForEvaluatedPlatforms(bool evaluateTwitch, bool evaluateKick)
+        {
+            if (evaluateTwitch)
+                ClearPlatformDashboard(Platform.Twitch);
+
+            if (evaluateKick)
+                ClearPlatformDashboard(Platform.Kick);
+
+            if (_currentTwitchCampaign == null && _currentKickCampaign == null)
+                MinerStatusChanged?.Invoke("Idle");
+        }
+
+        private void ClearPlatformDashboard(Platform platform)
+        {
+            if (platform == Platform.Twitch)
+            {
+                _currentTwitchCampaign = null;
+                _currentTwitchLogin = null;
+                _lastTwitchDropId = null;
+                TwitchChannelChanged?.Invoke(string.Empty);
+                TwitchCampaignChanged?.Invoke(string.Empty, null);
+                TwitchDropChanged?.Invoke(string.Empty, null);
+                TwitchProgressChanged?.Invoke(0, 0);
+                return;
+            }
+
+            _currentKickCampaign = null;
+            _lastKickDropId = null;
+            KickChannelChanged?.Invoke(string.Empty);
+            KickCampaignChanged?.Invoke(string.Empty, null);
+            KickDropChanged?.Invoke(string.Empty, null);
+            KickProgressChanged?.Invoke(0, 0);
         }
 
         private async Task<DateTime?> SelectTwitchCampaignToWatchAsync(List<DropsCampaign> twitchCampaigns, CancellationToken token)
@@ -1146,7 +1202,13 @@ namespace Core.Managers
                         AppLogger.Debug("HealthCheck", "Stream unhealthy -> forcing re-evaluation");
                         AppLogger.Warn("HealthCheck", $"Forcing re-evaluation. twitchOnline={twitchOnline}, twitchCategoryOk={twitchCorrectCategory}, twitchAd={twitchShowingAd}, kickOnline={kickOnline}, kickCategoryOk={kickCorrectCategory}");
                         _streamHealthTimer?.Stop();
-                        await StartWatchingStreams(true); // This will restart everything safely
+                        Platform? reevaluatePlatform = twitchNeedsReevaluation == kickNeedsReevaluation
+                            ? null
+                            : twitchNeedsReevaluation
+                                ? Platform.Twitch
+                                : Platform.Kick;
+
+                        await StartWatchingStreams(true, reevaluatePlatform); // Restart only the unhealthy platform when possible.
                     }
                 });
             };
