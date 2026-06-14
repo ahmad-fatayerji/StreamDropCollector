@@ -29,6 +29,7 @@ namespace Core.Managers
         // === SETTINGS PROPERTIES ===
         private bool _startWithWindows;
         private bool _minimizeToTrayOnStartup;
+        private bool _runInBackground;
         private string _theme = "System";
         private UpdateFrequency _updateFrequency = UpdateFrequency.Daily;
         private bool _autoClaimRewards = true;
@@ -89,6 +90,14 @@ namespace Core.Managers
                 else
                     SetField(ref _minimizeToTrayOnStartup, value);
             }
+        }
+        /// <summary>
+        /// Gets or sets a value indicating whether the application continues running in the background when the main window is closed.
+        /// </summary>
+        public bool RunInBackground
+        {
+            get => _runInBackground;
+            set => SetField(ref _runInBackground, value);
         }
         /// <summary>
         /// Gets or sets the name of the current application theme.
@@ -396,6 +405,7 @@ namespace Core.Managers
                 {
                     StartWithWindows = settings.StartWithWindows;
                     MinimizeToTrayOnStartup = settings.MinimizeToTrayOnStartup;
+                    RunInBackground = settings.RunInBackground;
                     Theme = settings.Theme ?? "System";
                     UpdateFrequency = settings.UpdateFrequency;
                     AutoClaimRewards = settings.AutoClaimRewards;
@@ -441,6 +451,7 @@ namespace Core.Managers
                 {
                     StartWithWindows = StartWithWindows,
                     MinimizeToTrayOnStartup = MinimizeToTrayOnStartup,
+                    RunInBackground = RunInBackground,
                     Theme = Theme,
                     UpdateFrequency = UpdateFrequency,
                     AutoClaimRewards = AutoClaimRewards,

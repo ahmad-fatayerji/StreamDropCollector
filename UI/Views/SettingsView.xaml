@@ -249,7 +249,12 @@
                         <CheckBox IsChecked="{Binding MinimizeToTrayOnStartup, Mode=TwoWay}"
                                   IsEnabled="{Binding StartWithWindows}"
                                   Style="{StaticResource ModernCheckBoxStyle}"
-                                  Content="Minimize to system tray on startup"/>
+                                  Content="Minimize to system tray on startup"
+                                  Margin="0,0,0,12"/>
+
+                        <CheckBox IsChecked="{Binding RunInBackground, Mode=TwoWay}"
+                                  Style="{StaticResource ModernCheckBoxStyle}"
+                                  Content="Keep running when window is closed"/>
                     </StackPanel>
                 </Border>
 

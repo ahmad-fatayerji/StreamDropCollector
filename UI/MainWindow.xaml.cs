@@ -520,7 +520,10 @@ namespace UI
         /// <param name="e"></param>
         private void OnCloseButtonClicked(object sender, RoutedEventArgs e)
         {
-            CloseApplication();
+            if (!UISettingsManager.Instance.RunInBackground)
+                CloseApplication();
+
+            EnterTrayMode();
         }
         /// <summary>
         /// Handles the double-click event on the tray icon to display and restore the window.
