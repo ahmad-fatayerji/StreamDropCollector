@@ -315,7 +315,7 @@ namespace UI
                 return;
 
             _isInTrayMode = true;
-            _savedWindowState = WindowState == WindowState.Minimized ? WindowState.Normal : WindowState;
+            _savedWindowState = WindowState;
 
             // Save current position (only if valid)
             Rect restoreBounds = RestoreBounds;
@@ -369,6 +369,7 @@ namespace UI
             WindowState = WindowState.Normal;
             Left = _savedLeft;
             Top = _savedTop;
+
             if (_savedWindowState == WindowState.Maximized)
                 WindowState = WindowState.Maximized;
 
