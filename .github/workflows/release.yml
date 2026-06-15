@@ -44,7 +44,7 @@ jobs:
               shell: pwsh
               run: |
                   # Save built output before switching branches
-                  Copy-Item -Recurse "UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/" "$env:TEMP/publish-output/"
+                  Copy-Item -Recurse "publish/self-contained/" "$env:TEMP/publish-output/"
 
                   git config user.name "github-actions[bot]"
                   git config user.email "github-actions[bot]@users.noreply.github.com"
