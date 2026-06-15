@@ -45,16 +45,16 @@ jobs:
               run: |
                   # Save built output before switching branches
                   Copy-Item -Recurse "UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/" "$env:TEMP/publish-output/"
-            
+
                   git config user.name "github-actions[bot]"
                   git config user.email "github-actions[bot]@users.noreply.github.com"
                   git fetch origin master
                   git checkout master
-            
+
                   # Restore built output
                   New-Item -ItemType Directory -Force -Path "UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/"
-                  Copy-Item -Recurse "$env:TEMP/publish-output/*" "UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/"
-            
+                  Copy-Item -Recurse -Force "$env:TEMP/publish-output/*" "UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/"
+
                   git add -f UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/
                   git commit -m "chore: publish ${{ github.ref_name }} binaries [skip ci]"
                   git push origin master
@@ -73,11 +73,11 @@ jobs:
               run: |
                   $notes = @"
                   [Download it here](https://download-directory.github.io/?url=https://github.com/tsgsOFFICIAL/StreamDropCollector/tree/master/UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64)
-                  
+
                   [Installation guide](https://github.com/tsgsOFFICIAL/StreamDropCollector?tab=readme-ov-file#quick-start)
-                  
+
                   Drop your comments on my [Discord](https://discord.gg/Cddu5aJ), or create an issue on GitHub.
-                  
+
                   **Full Changelog**: https://github.com/tsgsOFFICIAL/StreamDropCollector/compare/${{ steps.prev_tag.outputs.tag }}...${{ github.ref_name }}
                   "@
                   gh release create "${{ github.ref_name }}" `
