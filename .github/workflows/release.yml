@@ -1,9 +1,7 @@
 name: Release Build
-
 on:
     push:
         tags: ["v*"]
-
 jobs:
     build:
         runs-on: windows-latest
@@ -34,13 +32,24 @@ jobs:
                   -c Release
                   -r win-x64
                   -p:SelfContained=false
-                  -o publish/framework-dependent/
+                  -o UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/
 
             - name: Zip (Self-Contained)
               run: Compress-Archive -Path publish/self-contained/* -DestinationPath StreamDropCollector-${{ github.ref_name }}-self-contained.zip
 
             - name: Zip (Framework-Dependent)
-              run: Compress-Archive -Path publish/framework-dependent/* -DestinationPath StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip
+              run: Compress-Archive -Path UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/* -DestinationPath StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip
+
+            - name: Commit published output to master
+              shell: pwsh
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+                  git fetch origin master
+                  git checkout master
+                  git add -f UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64/
+                  git commit -m "chore: publish ${{ github.ref_name }} binaries [skip ci]"
+                  git push origin master
 
             - name: Get previous tag
               id: prev_tag
@@ -56,14 +65,13 @@ jobs:
               run: |
                   $notes = @"
                   [Download it here](https://download-directory.github.io/?url=https://github.com/tsgsOFFICIAL/StreamDropCollector/tree/master/UI/bin/Release/net10.0-windows10.0.17763.0/publish/win-x64)
-
+                  
                   [Installation guide](https://github.com/tsgsOFFICIAL/StreamDropCollector?tab=readme-ov-file#quick-start)
-
+                  
                   Drop your comments on my [Discord](https://discord.gg/Cddu5aJ), or create an issue on GitHub.
-
+                  
                   **Full Changelog**: https://github.com/tsgsOFFICIAL/StreamDropCollector/compare/${{ steps.prev_tag.outputs.tag }}...${{ github.ref_name }}
                   "@
-
                   gh release create "${{ github.ref_name }}" `
                     "StreamDropCollector-${{ github.ref_name }}-self-contained.zip" `
                     "StreamDropCollector-${{ github.ref_name }}-framework-dependent.zip" `
