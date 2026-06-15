@@ -354,8 +354,17 @@
                                                           Margin="0,6,0,0"
                                                           VerticalScrollBarVisibility="Auto"
                                                           HorizontalScrollBarVisibility="Disabled">
-                                                <ItemsControl ItemsSource="{Binding Streamers}"
-                                                              ItemTemplate="{StaticResource StreamerChipTemplate}">
+                                                <ItemsControl ItemTemplate="{StaticResource StreamerChipTemplate}">
+                                                    <ItemsControl.Style>
+                                                        <Style TargetType="ItemsControl">
+                                                            <Setter Property="ItemsSource" Value="{x:Null}"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding IsExpanded, RelativeSource={RelativeSource AncestorType=Expander}}" Value="True">
+                                                                    <Setter Property="ItemsSource" Value="{Binding Streamers}"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </ItemsControl.Style>
                                                     <ItemsControl.ItemsPanel>
                                                         <ItemsPanelTemplate>
                                                             <WrapPanel/>

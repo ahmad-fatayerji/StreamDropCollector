@@ -83,8 +83,8 @@ namespace Core.Models
             .Take(8)
             .ToList()
             .AsReadOnly();
-        public bool HasAdditionalStreamers => Streamers.Count > PreviewStreamers.Count;
-        public int AdditionalStreamerCount => Math.Max(0, Streamers.Count - PreviewStreamers.Count);
+        public bool HasAdditionalStreamers => Streamers.Count > 8;
+        public int AdditionalStreamerCount => Math.Max(0, Streamers.Count - 8);
         public string AdditionalStreamerSummary => $"+ {AdditionalStreamerCount} more";
         public string StreamerSummary => Streamers.Count == 0
             ? "No streamers listed"

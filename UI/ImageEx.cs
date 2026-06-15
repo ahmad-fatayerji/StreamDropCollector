@@ -44,6 +44,9 @@ namespace UI
         private record MemoryCacheEntry(byte[] Bytes, DateTime LastAccessed);
 
         private static readonly ConcurrentDictionary<string, MemoryCacheEntry> _memoryCache = new();
+        private static readonly ConcurrentDictionary<string, Lazy<Task<byte[]?>>> _inFlightFetches = new();
+        private static readonly SemaphoreSlim _httpFetchGate = new(6, 6);
+        private static readonly TimeSpan HttpFetchTimeout = TimeSpan.FromSeconds(6);
 
         // -- HTTP Client (singleton - avoids socket exhaustion) ----------------
 
@@ -88,7 +91,10 @@ namespace UI
             img.Source = null;
             img.Opacity = .3;
 
-            byte[]? bytes = await ResolveImageAsync(url);
+            byte[]? bytes = await Task.Run(async () => await ResolveImageAsync(url).ConfigureAwait(false));
+
+            if (!string.Equals(GetSourceUrl(img), url, StringComparison.Ordinal))
+                return;
 
             if (bytes == null || bytes.Length == 0)
             {
@@ -116,7 +122,7 @@ namespace UI
             {
                 try
                 {
-                    byte[] cached = await File.ReadAllBytesAsync(diskPath);
+                    byte[] cached = await File.ReadAllBytesAsync(diskPath).ConfigureAwait(false);
                     File.SetLastAccessTimeUtc(diskPath, DateTime.UtcNow);
                     _memoryCache[url] = new MemoryCacheEntry(cached, DateTime.UtcNow);
                     return cached;
@@ -127,14 +133,28 @@ namespace UI
                 }
             }
 
-            // 3. Normal HTTP fetch
+            Lazy<Task<byte[]?>> fetchTask = _inFlightFetches.GetOrAdd(
+                url,
+                key => new Lazy<Task<byte[]?>>(() => FetchAndCacheImageAsync(key)));
+
+            try
+            {
+                return await fetchTask.Value.ConfigureAwait(false);
+            }
+            finally
+            {
+                _inFlightFetches.TryRemove(url, out _);
+            }
+        }
+
+        private static async Task<byte[]?> FetchAndCacheImageAsync(string url)
+        {
+            // Avoid using the WebView fallback in the general image binding path.
+            // Creating/navigating WebView2 for many inventory images can stall the UI during initial load.
             byte[]? fetched = await TryHttpFetchAsync(url);
 
-            // 4. WebView fallback (blocked CDNs etc.)
-            fetched ??= await TryWebViewFetchAsync(url);
-
             if (fetched != null && fetched.Length > 0)
-                await PersistToCacheAsync(url, fetched);
+                await PersistToCacheAsync(url, fetched).ConfigureAwait(false);
 
             return fetched;
         }
@@ -143,28 +163,34 @@ namespace UI
 
         private static async Task<byte[]?> TryHttpFetchAsync(string url)
         {
+            await _httpFetchGate.WaitAsync().ConfigureAwait(false);
             try
             {
-                return await _http.GetByteArrayAsync(url);
+                using CancellationTokenSource timeoutCts = new(HttpFetchTimeout);
+                return await _http.GetByteArrayAsync(url, timeoutCts.Token).ConfigureAwait(false);
             }
             catch
             {
                 return null;
             }
+            finally
+            {
+                _httpFetchGate.Release();
+            }
         }
 
         private static async Task<byte[]?> TryWebViewFetchAsync(string url)
         {
-            await _webViewLock.WaitAsync();
+            await _webViewLock.WaitAsync().ConfigureAwait(false);
             try
             {
                 if (_sharedWebView == null)
                 {
                     _sharedWebView = new HiddenWebViewHost();
-                    await _sharedWebView.EnsureInitializedAsync();
+                    await _sharedWebView.EnsureInitializedAsync().ConfigureAwait(false);
                 }
 
-                return await _sharedWebView.FetchImageBytesAsync(url);
+                return await _sharedWebView.FetchImageBytesAsync(url).ConfigureAwait(false);
             }
             catch
             {
@@ -185,7 +211,7 @@ namespace UI
             try
             {
                 string diskPath = DiskCachePath(url);
-                await File.WriteAllBytesAsync(diskPath, bytes);
+                await File.WriteAllBytesAsync(diskPath, bytes).ConfigureAwait(false);
             }
             catch
             {
@@ -255,7 +281,7 @@ namespace UI
                 bmp.EndInit();
                 bmp.Freeze();
                 bitmap = bmp;
-            });
+            }).ConfigureAwait(false);
 
             await img.Dispatcher.InvokeAsync(() =>
             {
